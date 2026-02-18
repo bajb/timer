@@ -4,10 +4,15 @@ import { formatDuration } from '../../lib/utils'
 
 export default function TimerComplete() {
   const config = useTimerStore((s) => s.config)
+  const steps = useTimerStore((s) => s.steps)
   const stop = useTimerStore((s) => s.stop)
   const start = useTimerStore((s) => s.start)
 
-  const totalTime = (config.exerciseTime + config.restTime) * config.completedRounds
+  const totalTime =
+    config.mode === 'pyramid'
+      ? steps.slice(0, config.completedRounds).reduce((a, b) => a + b, 0) +
+        config.restTime * Math.max(0, config.completedRounds - 1)
+      : (config.exerciseTime + config.restTime) * config.completedRounds
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 p-4 text-center">
@@ -17,7 +22,7 @@ export default function TimerComplete() {
       <div>
         <h2 className="text-2xl font-bold">Workout Complete!</h2>
         <p className="mt-1 text-gray-500">
-          {config.completedRounds} rounds &middot; {formatDuration(totalTime)}
+          {config.completedRounds} {config.mode === 'pyramid' ? 'steps' : 'rounds'} &middot; {formatDuration(totalTime)}
         </p>
       </div>
       <div className="flex gap-3">

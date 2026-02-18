@@ -4,6 +4,7 @@ import { useTimerStore } from '../../stores/timerStore'
 import { useAudio } from '../../hooks/useAudio'
 import { useVibration } from '../../hooks/useVibration'
 import { useWakeLock } from '../../hooks/useWakeLock'
+import { formatDuration } from '../../lib/utils'
 import ProgressRing from './ProgressRing'
 
 export default function TimerRunning() {
@@ -45,7 +46,14 @@ export default function TimerRunning() {
     tickBeep(timeRemaining)
   }, [timeRemaining, tickBeep])
 
-  const totalTime = phase === 'exercise' ? config.exerciseTime : config.restTime
+  const steps = useTimerStore((s) => s.steps)
+  const currentStepDuration =
+    config.mode === 'pyramid' && steps[currentRound - 1]
+      ? steps[currentRound - 1]
+      : config.exerciseTime
+
+  const totalTime =
+    phase === 'exercise' ? currentStepDuration : config.restTime
   const progress = totalTime > 0 ? timeRemaining / totalTime : 0
   const phaseColor = phase === 'exercise' ? '#22c55e' : '#ef4444'
   const phaseLabel = phase === 'exercise' ? 'EXERCISE' : 'REST'
@@ -72,7 +80,10 @@ export default function TimerRunning() {
       </ProgressRing>
 
       <p className="text-sm text-gray-500 font-medium">
-        Round {currentRound} of {config.rounds}
+        Step {currentRound} of {config.rounds}
+        {config.mode === 'pyramid' && phase === 'exercise' && (
+          <span className="text-gray-400"> &middot; {formatDuration(currentStepDuration)}</span>
+        )}
       </p>
 
       <div className="flex gap-4">

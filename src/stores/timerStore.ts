@@ -3,11 +3,23 @@ import type { HIITConfig } from '../db'
 
 export type TimerPhase = 'idle' | 'exercise' | 'rest' | 'complete'
 
+export function buildPyramidSteps(increment: number, peak: number): number[] {
+  const steps: number[] = []
+  for (let t = increment; t <= peak; t += increment) {
+    steps.push(t)
+  }
+  for (let t = peak - increment; t >= increment; t -= increment) {
+    steps.push(t)
+  }
+  return steps
+}
+
 interface TimerState {
   phase: TimerPhase
   timeRemaining: number
   currentRound: number
   config: HIITConfig
+  steps: number[]
   isPaused: boolean
   audioEnabled: boolean
   vibrationEnabled: boolean
@@ -23,10 +35,13 @@ interface TimerState {
 }
 
 const DEFAULT_CONFIG: HIITConfig = {
+  mode: 'standard',
   exerciseTime: 30,
   restTime: 15,
   rounds: 8,
   completedRounds: 0,
+  stepIncrement: 10,
+  peakTime: 40,
 }
 
 export const useTimerStore = create<TimerState>((set, get) => ({
@@ -34,6 +49,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   timeRemaining: 0,
   currentRound: 1,
   config: { ...DEFAULT_CONFIG },
+  steps: [],
   isPaused: false,
   audioEnabled: localStorage.getItem('fittrack-audio') !== 'false',
   vibrationEnabled: localStorage.getItem('fittrack-vibration') !== 'false',
@@ -43,12 +59,18 @@ export const useTimerStore = create<TimerState>((set, get) => ({
 
   start: () => {
     const { config } = get()
+    const steps =
+      config.mode === 'pyramid'
+        ? buildPyramidSteps(config.stepIncrement, config.peakTime)
+        : []
+    const rounds = config.mode === 'pyramid' ? steps.length : config.rounds
     set({
       phase: 'exercise',
-      timeRemaining: config.exerciseTime,
+      timeRemaining: config.mode === 'pyramid' ? steps[0] : config.exerciseTime,
       currentRound: 1,
       isPaused: false,
-      config: { ...config, completedRounds: 0 },
+      steps,
+      config: { ...config, rounds, completedRounds: 0 },
     })
   },
 
@@ -64,7 +86,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     }),
 
   tick: () => {
-    const { phase, timeRemaining, currentRound, config, isPaused } = get()
+    const { phase, timeRemaining, currentRound, config, isPaused, steps } = get()
     if (isPaused || phase === 'idle' || phase === 'complete') return
 
     if (timeRemaining > 1) {
@@ -75,22 +97,24 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     // Time expired — transition
     if (phase === 'exercise') {
       if (currentRound >= config.rounds) {
-        // All rounds done
         set({
           phase: 'complete',
           timeRemaining: 0,
           config: { ...config, completedRounds: currentRound },
         })
       } else {
-        // Go to rest
         set({ phase: 'rest', timeRemaining: config.restTime })
       }
     } else if (phase === 'rest') {
-      // Start next round
+      const nextRound = currentRound + 1
+      const exerciseTime =
+        config.mode === 'pyramid' && steps[nextRound - 1]
+          ? steps[nextRound - 1]
+          : config.exerciseTime
       set({
         phase: 'exercise',
-        timeRemaining: config.exerciseTime,
-        currentRound: currentRound + 1,
+        timeRemaining: exerciseTime,
+        currentRound: nextRound,
       })
     }
   },

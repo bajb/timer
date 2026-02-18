@@ -1,10 +1,15 @@
-import { useTimerStore } from '../../stores/timerStore'
+import { useTimerStore, buildPyramidSteps } from '../../stores/timerStore'
 import { Play } from 'lucide-react'
-import { formatDuration } from '../../lib/utils'
+import { formatDuration, cn } from '../../lib/utils'
 
-const PRESETS = [
+const STANDARD_PRESETS = [
   { label: 'Tabata', exerciseTime: 20, restTime: 10, rounds: 8 },
   { label: 'Classic', exerciseTime: 40, restTime: 20, rounds: 10 },
+] as const
+
+const PYRAMID_PRESETS = [
+  { label: '10→40', stepIncrement: 10, peakTime: 40, restTime: 10 },
+  { label: '15→60', stepIncrement: 15, peakTime: 60, restTime: 15 },
 ] as const
 
 function Stepper({
@@ -55,58 +60,156 @@ export default function TimerConfig() {
   const setConfig = useTimerStore((s) => s.setConfig)
   const start = useTimerStore((s) => s.start)
 
-  const totalSeconds = (config.exerciseTime + config.restTime) * config.rounds
+  const pyramidSteps =
+    config.mode === 'pyramid'
+      ? buildPyramidSteps(config.stepIncrement, config.peakTime)
+      : []
+
+  const totalSeconds =
+    config.mode === 'pyramid'
+      ? pyramidSteps.reduce((a, b) => a + b, 0) +
+        config.restTime * Math.max(0, pyramidSteps.length - 1)
+      : (config.exerciseTime + config.restTime) * config.rounds
 
   return (
     <div className="flex flex-1 flex-col p-4">
       <h1 className="text-lg font-semibold mb-4">HIIT Timer</h1>
 
-      <div className="flex gap-2 mb-4">
-        {PRESETS.map((p) => (
+      {/* Mode toggle */}
+      <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 mb-4">
+        {(['standard', 'pyramid'] as const).map((m) => (
           <button
-            key={p.label}
-            onClick={() =>
-              setConfig({
-                exerciseTime: p.exerciseTime,
-                restTime: p.restTime,
-                rounds: p.rounds,
-              })
-            }
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            key={m}
+            onClick={() => setConfig({ mode: m })}
+            className={cn(
+              'flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              config.mode === m
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700',
+            )}
           >
-            {p.label}
+            {m === 'standard' ? 'Standard' : 'Pyramid'}
           </button>
         ))}
       </div>
 
-      <div className="space-y-3 mb-6">
-        <Stepper
-          label="Exercise"
-          value={config.exerciseTime}
-          onChange={(v) => setConfig({ exerciseTime: v })}
-          step={5}
-          min={5}
-          max={300}
-          format={formatDuration}
-        />
-        <Stepper
-          label="Rest"
-          value={config.restTime}
-          onChange={(v) => setConfig({ restTime: v })}
-          step={5}
-          min={5}
-          max={300}
-          format={formatDuration}
-        />
-        <Stepper
-          label="Rounds"
-          value={config.rounds}
-          onChange={(v) => setConfig({ rounds: v })}
-          step={1}
-          min={1}
-          max={50}
-        />
+      {/* Presets */}
+      <div className="flex gap-2 mb-4">
+        {config.mode === 'standard'
+          ? STANDARD_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() =>
+                  setConfig({
+                    exerciseTime: p.exerciseTime,
+                    restTime: p.restTime,
+                    rounds: p.rounds,
+                  })
+                }
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                {p.label}
+              </button>
+            ))
+          : PYRAMID_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() =>
+                  setConfig({
+                    stepIncrement: p.stepIncrement,
+                    peakTime: p.peakTime,
+                    restTime: p.restTime,
+                  })
+                }
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                {p.label}
+              </button>
+            ))}
       </div>
+
+      {/* Steppers */}
+      <div className="space-y-3 mb-4">
+        {config.mode === 'standard' ? (
+          <>
+            <Stepper
+              label="Exercise"
+              value={config.exerciseTime}
+              onChange={(v) => setConfig({ exerciseTime: v })}
+              step={5}
+              min={5}
+              max={300}
+              format={formatDuration}
+            />
+            <Stepper
+              label="Rest"
+              value={config.restTime}
+              onChange={(v) => setConfig({ restTime: v })}
+              step={5}
+              min={5}
+              max={300}
+              format={formatDuration}
+            />
+            <Stepper
+              label="Rounds"
+              value={config.rounds}
+              onChange={(v) => setConfig({ rounds: v })}
+              step={1}
+              min={1}
+              max={50}
+            />
+          </>
+        ) : (
+          <>
+            <Stepper
+              label="Step Size"
+              value={config.stepIncrement}
+              onChange={(v) => setConfig({ stepIncrement: v })}
+              step={5}
+              min={5}
+              max={60}
+              format={formatDuration}
+            />
+            <Stepper
+              label="Peak"
+              value={config.peakTime}
+              onChange={(v) => setConfig({ peakTime: v })}
+              step={5}
+              min={10}
+              max={300}
+              format={formatDuration}
+            />
+            <Stepper
+              label="Rest"
+              value={config.restTime}
+              onChange={(v) => setConfig({ restTime: v })}
+              step={5}
+              min={5}
+              max={120}
+              format={formatDuration}
+            />
+          </>
+        )}
+      </div>
+
+      {/* Pyramid sequence preview */}
+      {config.mode === 'pyramid' && pyramidSteps.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 mb-4">
+          <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+            Sequence ({pyramidSteps.length} steps)
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {pyramidSteps.map((d, i) => (
+              <span
+                key={i}
+                className="rounded-md bg-white border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700"
+              >
+                {formatDuration(d)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mb-6 text-center">
         <span className="text-sm text-gray-500">Total Time: </span>

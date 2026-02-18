@@ -66,10 +66,14 @@ export interface SessionSet {
 }
 
 export interface HIITConfig {
+  mode: 'standard' | 'pyramid'
   exerciseTime: number
   restTime: number
   rounds: number
   completedRounds: number
+  // Pyramid-specific
+  stepIncrement: number
+  peakTime: number
 }
 
 export interface Session {
