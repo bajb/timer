@@ -45,16 +45,24 @@ export interface SessionExercise {
   targetReps?: number
   targetWeight?: number
   targetDuration?: number
+  completed: boolean
+  notes?: string
+}
+
+export interface ExerciseInstance {
+  completed: boolean
   actualReps?: number
   actualWeight?: number
   actualDuration?: number
-  completed: boolean
   notes?: string
 }
 
 export interface SessionSet {
   exercises: SessionExercise[]
+  restDuration: number
+  reps: number
   completed: boolean
+  instanceData?: ExerciseInstance[][]  // [rep][exerciseIdx]
 }
 
 export interface HIITConfig {
@@ -112,17 +120,52 @@ db.version(2)
               targetReps: ex.reps,
               targetWeight: ex.weight,
               targetDuration: ex.duration,
-              actualReps: ex.reps,
-              actualWeight: ex.weight,
-              actualDuration: ex.duration,
               completed: true,
               notes: ex.notes,
             })),
+            restDuration: 30,
+            reps: 1,
             completed: true,
+            instanceData: [
+              oldExercises.map((ex) => ({
+                completed: true,
+                actualReps: ex.reps as number | undefined,
+                actualWeight: ex.weight as number | undefined,
+                actualDuration: ex.duration as number | undefined,
+                notes: ex.notes as string | undefined,
+              })),
+            ],
           },
         ]
         session.status = 'completed'
         delete session.exercises
+      }),
+  )
+
+db.version(3)
+  .stores({})
+  .upgrade((tx) =>
+    tx
+      .table('sessions')
+      .toCollection()
+      .modify((session: Record<string, unknown>) => {
+        const sets = session.sets as Array<Record<string, unknown>>
+        for (const set of sets) {
+          set.restDuration ??= 30
+          set.reps ??= 1
+          if (!set.instanceData) {
+            const exercises = set.exercises as Array<Record<string, unknown>>
+            set.instanceData = [
+              exercises.map((ex) => ({
+                completed: (ex.completed as boolean) ?? false,
+                actualReps: ex.actualReps as number | undefined,
+                actualWeight: ex.actualWeight as number | undefined,
+                actualDuration: ex.actualDuration as number | undefined,
+                notes: ex.notes as string | undefined,
+              })),
+            ]
+          }
+        }
       }),
   )
 

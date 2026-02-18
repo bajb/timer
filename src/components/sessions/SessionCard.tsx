@@ -25,6 +25,7 @@ export default function SessionCard({ session }: { session: Session }) {
     .filter(Boolean)
     .join(', ')
   const setCount = session.sets.length
+  const reps = session.sets[0]?.reps ?? 1
 
   return (
     <button
@@ -50,6 +51,7 @@ export default function SessionCard({ session }: { session: Session }) {
         {exerciseNames && (
           <p className="text-xs text-gray-400 truncate mt-0.5">
             {exerciseNames} &middot; {setCount} {setCount === 1 ? 'set' : 'sets'}
+            {reps > 1 && ` · ${reps}x`}
           </p>
         )}
       </div>

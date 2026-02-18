@@ -1,76 +1,248 @@
-import { useState, useEffect } from 'react'
-import { Check, ChevronDown, ChevronUp, Clock } from 'lucide-react'
-import { db, type Session, type SessionExercise } from '../../db'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Pause,
+  Play,
+  SkipForward,
+} from 'lucide-react'
+import { db, type Session, type SessionSet, type ExerciseInstance } from '../../db'
 import { formatDuration, cn } from '../../lib/utils'
+import { useAudio } from '../../hooks/useAudio'
+import { useVibration } from '../../hooks/useVibration'
+import { useWakeLock } from '../../hooks/useWakeLock'
+import { useTimerStore } from '../../stores/timerStore'
+import ProgressRing from '../timer/ProgressRing'
+
+// --- Sequence types ---
+
+type SequenceStep =
+  | { type: 'exercise'; exerciseIndex: number; rep: number; timed: boolean; duration: number }
+  | { type: 'rest'; duration: number; rep: number }
+
+function buildSequence(set: SessionSet): SequenceStep[] {
+  const steps: SequenceStep[] = []
+  for (let rep = 0; rep < set.reps; rep++) {
+    for (let ei = 0; ei < set.exercises.length; ei++) {
+      const ex = set.exercises[ei]
+      steps.push({
+        type: 'exercise',
+        exerciseIndex: ei,
+        rep,
+        timed: (ex.targetDuration ?? 0) > 0,
+        duration: ex.targetDuration ?? 0,
+      })
+      const isLast = rep === set.reps - 1 && ei === set.exercises.length - 1
+      if (!isLast && set.restDuration > 0) {
+        steps.push({ type: 'rest', duration: set.restDuration, rep })
+      }
+    }
+  }
+  return steps
+}
+
+function findFirstIncompleteStep(set: SessionSet, sequence: SequenceStep[]): number {
+  for (let i = 0; i < sequence.length; i++) {
+    const step = sequence[i]
+    if (step.type === 'exercise') {
+      const inst = set.instanceData?.[step.rep]?.[step.exerciseIndex]
+      if (!inst?.completed) return i
+    }
+    // Rest steps: skip if the prior exercise was completed
+    if (step.type === 'rest') {
+      // Check if the next exercise step is incomplete
+      const next = sequence[i + 1]
+      if (next?.type === 'exercise') {
+        const inst = set.instanceData?.[next.rep]?.[next.exerciseIndex]
+        if (!inst?.completed) return i
+      }
+    }
+  }
+  return sequence.length // all done
+}
+
+// --- Component ---
 
 interface Props {
   session: Session
 }
 
 export default function LiveSessionView({ session }: Props) {
+  const [activeSetIdx, setActiveSetIdx] = useState(() => {
+    const idx = session.sets.findIndex((s) => !s.completed)
+    return idx === -1 ? session.sets.length - 1 : idx
+  })
+  const [stepIndex, setStepIndex] = useState(0)
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const [isPaused, setIsPaused] = useState(false)
   const [expandedExercise, setExpandedExercise] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
+
+  const countdownRef = useRef<ReturnType<typeof setInterval>>()
+  const prevStepRef = useRef<string>('')
+
+  const audioEnabled = useTimerStore((s) => s.audioEnabled)
+  const vibrationEnabled = useTimerStore((s) => s.vibrationEnabled)
+  const { tickBeep, phaseChangeBeep, completeBeep } = useAudio(audioEnabled)
+  const vibration = useVibration(vibrationEnabled)
+
+  const activeSet = session.sets[activeSetIdx]
+  const sequence = useMemo(() => buildSequence(activeSet), [activeSet])
+
+  const isTimerActive = countdown !== null && !isPaused
+  useWakeLock(isTimerActive)
 
   // Elapsed timer
   useEffect(() => {
     if (!session.startedAt) return
-    const update = () => {
+    const update = () =>
       setElapsed(Math.round((Date.now() - session.startedAt!.getTime()) / 1000))
-    }
     update()
     const id = setInterval(update, 1000)
     return () => clearInterval(id)
   }, [session.startedAt])
 
-  const currentSetIndex = session.sets.findIndex((s) => !s.completed)
-  const isLastSet = currentSetIndex === session.sets.length - 1 || currentSetIndex === -1
-  const activeSetIdx = currentSetIndex === -1 ? session.sets.length - 1 : currentSetIndex
-  const activeSet = session.sets[activeSetIdx]
-  const allExercisesDone = activeSet?.exercises.every((e) => e.completed) ?? false
+  // Sync step index when switching sets
+  useEffect(() => {
+    const idx = findFirstIncompleteStep(activeSet, sequence)
+    setStepIndex(Math.min(idx, sequence.length - 1))
+    setCountdown(null)
+    setIsPaused(false)
+  }, [activeSetIdx]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function toggleExercise(setIdx: number, exIdx: number) {
-    const sets = session.sets.map((s, si) => {
-      if (si !== setIdx) return s
-      const exercises = s.exercises.map((ex, ei) => {
-        if (ei !== exIdx) return ex
-        const toggled = { ...ex, completed: !ex.completed }
-        // Auto-fill actuals from targets when checking on
-        if (toggled.completed) {
-          toggled.actualReps ??= toggled.targetReps
-          toggled.actualWeight ??= toggled.targetWeight
-          toggled.actualDuration ??= toggled.targetDuration
-        }
-        return toggled
-      })
-      return {
-        exercises,
-        completed: exercises.every((e) => e.completed),
+  // Auto-start countdown for timed steps
+  const currentStep = sequence[stepIndex] as SequenceStep | undefined
+  useEffect(() => {
+    if (!currentStep) return
+
+    const stepKey = `${activeSetIdx}-${stepIndex}`
+    if (stepKey === prevStepRef.current) return
+    prevStepRef.current = stepKey
+
+    if (currentStep.type === 'rest') {
+      setCountdown(currentStep.duration)
+      setIsPaused(false)
+      phaseChangeBeep()
+      vibration.phaseChange()
+    } else if (currentStep.type === 'exercise' && currentStep.timed) {
+      // Only auto-start if not already completed
+      const inst = activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
+      if (!inst?.completed) {
+        setCountdown(currentStep.duration)
+        setIsPaused(false)
+        phaseChangeBeep()
+        vibration.phaseChange()
+      } else {
+        setCountdown(null)
       }
+    } else {
+      setCountdown(null)
+      phaseChangeBeep()
+      vibration.phaseChange()
+    }
+  }, [currentStep, stepIndex, activeSetIdx]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Countdown interval
+  useEffect(() => {
+    clearInterval(countdownRef.current)
+    if (countdown === null || countdown <= 0 || isPaused) return
+
+    countdownRef.current = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev === null || prev <= 1) return 0
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(countdownRef.current)
+  }, [countdown !== null && countdown > 0, isPaused]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tick beeps at 3, 2, 1
+  useEffect(() => {
+    if (countdown !== null) tickBeep(countdown)
+  }, [countdown, tickBeep])
+
+  // Auto-advance when countdown hits 0
+  useEffect(() => {
+    if (countdown !== 0) return
+    if (!currentStep) return
+
+    if (currentStep.type === 'exercise' && currentStep.timed) {
+      completeExercise(currentStep.rep, currentStep.exerciseIndex)
+    }
+    // Advance to next step
+    advanceStep()
+  }, [countdown]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function advanceStep() {
+    const next = stepIndex + 1
+    if (next < sequence.length) {
+      setStepIndex(next)
+    } else {
+      // Set complete
+      markSetComplete()
+    }
+  }
+
+  async function completeExercise(rep: number, exerciseIndex: number) {
+    const sets = session.sets.map((s, si) => {
+      if (si !== activeSetIdx) return s
+      const instanceData = (s.instanceData ?? []).map((repData, ri) =>
+        repData.map((inst, ei) => {
+          if (ri !== rep || ei !== exerciseIndex) return inst
+          const ex = s.exercises[exerciseIndex]
+          return {
+            ...inst,
+            completed: true,
+            actualReps: inst.actualReps ?? ex.targetReps,
+            actualWeight: inst.actualWeight ?? ex.targetWeight,
+            actualDuration: inst.actualDuration ?? ex.targetDuration,
+          }
+        }),
+      )
+      return { ...s, instanceData }
     })
     await db.sessions.update(session.id, { sets })
   }
 
-  async function updateExerciseActual(
-    setIdx: number,
-    exIdx: number,
-    patch: Partial<SessionExercise>,
+  async function updateInstanceField(
+    rep: number,
+    exerciseIndex: number,
+    patch: Partial<ExerciseInstance>,
   ) {
     const sets = session.sets.map((s, si) => {
-      if (si !== setIdx) return s
-      return {
-        ...s,
-        exercises: s.exercises.map((ex, ei) =>
-          ei === exIdx ? { ...ex, ...patch } : ex,
+      if (si !== activeSetIdx) return s
+      const instanceData = (s.instanceData ?? []).map((repData, ri) =>
+        repData.map((inst, ei) =>
+          ri === rep && ei === exerciseIndex ? { ...inst, ...patch } : inst,
         ),
-      }
+      )
+      return { ...s, instanceData }
     })
     await db.sessions.update(session.id, { sets })
   }
 
-  async function startNextSet() {
-    // Current set should already be marked completed via toggleExercise
-    // Just collapse the expanded exercise
-    setExpandedExercise(null)
+  async function markSetComplete() {
+    const sets = session.sets.map((s, si) =>
+      si === activeSetIdx ? { ...s, completed: true } : s,
+    )
+    await db.sessions.update(session.id, { sets })
+    setCountdown(null)
+  }
+
+  async function handleDone() {
+    if (!currentStep || currentStep.type !== 'exercise') return
+    await completeExercise(currentStep.rep, currentStep.exerciseIndex)
+    advanceStep()
+  }
+
+  function skip() {
+    setCountdown(null)
+    if (currentStep?.type === 'exercise') {
+      completeExercise(currentStep.rep, currentStep.exerciseIndex)
+    }
+    advanceStep()
   }
 
   async function completeSession() {
@@ -83,9 +255,28 @@ export default function LiveSessionView({ session }: Props) {
       completedAt: now,
       duration,
     })
+    completeBeep()
+    vibration.complete()
   }
 
-  const expandKey = (setIdx: number, exIdx: number) => `${setIdx}-${exIdx}`
+  const allSetsDone = session.sets.every((s) => s.completed)
+  const currentSetDone = activeSet.completed
+  const isExerciseStep = currentStep?.type === 'exercise'
+  const isRestStep = currentStep?.type === 'rest'
+  const currentExercise =
+    isExerciseStep ? activeSet.exercises[currentStep.exerciseIndex] : null
+  const currentRep = currentStep ? currentStep.rep + 1 : 1
+  const totalReps = activeSet.reps
+
+  const countdownTotal =
+    currentStep?.type === 'rest'
+      ? activeSet.restDuration
+      : currentStep?.type === 'exercise' && currentStep.timed
+        ? currentStep.duration
+        : 0
+  const progress = countdownTotal > 0 && countdown !== null ? countdown / countdownTotal : 0
+
+  const expandKey = (rep: number, ei: number) => `${activeSetIdx}-${rep}-${ei}`
 
   return (
     <div className="flex flex-1 flex-col">
@@ -98,11 +289,12 @@ export default function LiveSessionView({ session }: Props) {
             {formatDuration(elapsed)}
           </div>
         </div>
-        {/* Set progress dots */}
+        {/* Tappable set progress */}
         <div className="mt-2 flex items-center gap-1.5">
           {session.sets.map((s, i) => (
-            <div
+            <button
               key={i}
+              onClick={() => setActiveSetIdx(i)}
               className={cn(
                 'h-2 flex-1 rounded-full transition-colors',
                 s.completed
@@ -114,161 +306,200 @@ export default function LiveSessionView({ session }: Props) {
             />
           ))}
         </div>
+        <p className="mt-1 text-xs text-gray-400 text-center">
+          Set {activeSetIdx + 1} of {session.sets.length}
+          {totalReps > 1 && ` · Round ${currentRep} of ${totalReps}`}
+        </p>
       </header>
 
-      {/* Current set */}
-      <div className="flex-1 overflow-y-auto p-4">
-        <h2 className="text-sm font-semibold text-gray-500 mb-3">
-          Set {activeSetIdx + 1} of {session.sets.length}
-        </h2>
-
-        <div className="space-y-2">
-          {activeSet?.exercises.map((ex, exIdx) => {
-            const key = expandKey(activeSetIdx, exIdx)
-            const isExpanded = expandedExercise === key
-
-            return (
-              <div
-                key={exIdx}
-                className={cn(
-                  'rounded-xl border bg-white transition-colors',
-                  ex.completed ? 'border-green-200 bg-green-50/50' : 'border-gray-200',
-                )}
+      {/* Main content */}
+      <div className="flex flex-1 flex-col items-center justify-center p-4 gap-4">
+        {currentSetDone ? (
+          /* Set complete state */
+          <div className="text-center">
+            <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-full bg-green-100 mb-3">
+              <Check size={32} className="text-green-600" />
+            </div>
+            <p className="font-semibold text-lg">Set Complete</p>
+            {!allSetsDone && (
+              <button
+                onClick={() => {
+                  const next = session.sets.findIndex((s, i) => i > activeSetIdx && !s.completed)
+                  if (next !== -1) setActiveSetIdx(next)
+                }}
+                className="mt-4 rounded-xl bg-primary-600 px-6 py-2.5 text-sm font-semibold text-white"
               >
-                {/* Exercise row */}
-                <div className="flex items-center gap-3 p-3">
-                  <button
-                    onClick={() => toggleExercise(activeSetIdx, exIdx)}
-                    className={cn(
-                      'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
-                      ex.completed
-                        ? 'border-green-500 bg-green-500 text-white'
-                        : 'border-gray-300',
-                    )}
-                  >
-                    {ex.completed && <Check size={14} />}
-                  </button>
-                  <button
-                    onClick={() => setExpandedExercise(isExpanded ? null : key)}
-                    className="flex flex-1 items-center justify-between min-w-0"
-                  >
-                    <div className="text-left min-w-0">
-                      <p
-                        className={cn(
-                          'font-medium text-sm',
-                          ex.completed && 'line-through text-gray-400',
-                        )}
-                      >
-                        {ex.name}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {[
-                          ex.targetReps && `${ex.actualReps ?? ex.targetReps} reps`,
-                          ex.targetWeight && `${ex.actualWeight ?? ex.targetWeight}kg`,
-                          ex.targetDuration && `${ex.actualDuration ?? ex.targetDuration}s`,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </p>
-                    </div>
-                    {isExpanded ? (
-                      <ChevronUp size={16} className="text-gray-400" />
-                    ) : (
-                      <ChevronDown size={16} className="text-gray-400" />
-                    )}
-                  </button>
-                </div>
+                Next Set
+              </button>
+            )}
+          </div>
+        ) : isRestStep ? (
+          /* Rest phase */
+          <>
+            <div className="rounded-full bg-red-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
+              REST
+            </div>
+            <ProgressRing progress={progress} size={220} strokeWidth={10} color="#ef4444">
+              <div className="text-5xl font-bold tabular-nums">{countdown ?? 0}</div>
+            </ProgressRing>
+          </>
+        ) : isExerciseStep && currentExercise ? (
+          /* Exercise phase */
+          <>
+            <div className="rounded-full bg-green-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
+              {currentExercise.name.toUpperCase()}
+            </div>
 
-                {/* Expanded: edit actual values */}
-                {isExpanded && (
-                  <div className="border-t border-gray-100 px-3 pb-3 pt-2 space-y-2">
-                    <p className="text-xs text-gray-500 font-medium">Actual values</p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {ex.targetReps != null && (
-                        <label className="block">
-                          <span className="text-xs text-gray-400">Reps</span>
-                          <input
-                            type="number"
-                            value={ex.actualReps ?? ex.targetReps ?? ''}
-                            onChange={(e) =>
-                              updateExerciseActual(activeSetIdx, exIdx, {
-                                actualReps: e.target.value ? Number(e.target.value) : undefined,
-                              })
-                            }
-                            className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-                          />
-                        </label>
-                      )}
-                      {ex.targetWeight != null && (
-                        <label className="block">
-                          <span className="text-xs text-gray-400">Weight (kg)</span>
-                          <input
-                            type="number"
-                            value={ex.actualWeight ?? ex.targetWeight ?? ''}
-                            onChange={(e) =>
-                              updateExerciseActual(activeSetIdx, exIdx, {
-                                actualWeight: e.target.value ? Number(e.target.value) : undefined,
-                              })
-                            }
-                            className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-                          />
-                        </label>
-                      )}
-                      {ex.targetDuration != null && (
-                        <label className="block">
-                          <span className="text-xs text-gray-400">Duration (s)</span>
-                          <input
-                            type="number"
-                            value={ex.actualDuration ?? ex.targetDuration ?? ''}
-                            onChange={(e) =>
-                              updateExerciseActual(activeSetIdx, exIdx, {
-                                actualDuration: e.target.value ? Number(e.target.value) : undefined,
-                              })
-                            }
-                            className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-                          />
-                        </label>
-                      )}
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="Notes..."
-                      value={ex.notes ?? ''}
-                      onChange={(e) =>
-                        updateExerciseActual(activeSetIdx, exIdx, {
-                          notes: e.target.value || undefined,
-                        })
-                      }
-                      className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-                    />
-                  </div>
+            {currentStep.timed && countdown !== null ? (
+              <ProgressRing progress={progress} size={220} strokeWidth={10} color="#22c55e">
+                <div className="text-5xl font-bold tabular-nums">{countdown}</div>
+              </ProgressRing>
+            ) : (
+              /* Non-timed exercise: show targets */
+              <div className="rounded-xl border border-gray-200 bg-white p-6 w-full max-w-xs text-center">
+                <p className="text-3xl font-bold mb-1">
+                  {[
+                    currentExercise.targetReps && `${currentExercise.targetReps} reps`,
+                    currentExercise.targetWeight && `${currentExercise.targetWeight}kg`,
+                  ]
+                    .filter(Boolean)
+                    .join(' × ')}
+                </p>
+                {currentExercise.notes && (
+                  <p className="text-sm text-gray-500">{currentExercise.notes}</p>
                 )}
               </div>
-            )
-          })}
-        </div>
+            )}
+
+            {/* Expandable actual values editor */}
+            <button
+              onClick={() => {
+                const key = expandKey(currentStep.rep, currentStep.exerciseIndex)
+                setExpandedExercise(expandedExercise === key ? null : key)
+              }}
+              className="flex items-center gap-1 text-xs text-gray-400"
+            >
+              Edit actuals
+              {expandedExercise === expandKey(currentStep.rep, currentStep.exerciseIndex) ? (
+                <ChevronUp size={12} />
+              ) : (
+                <ChevronDown size={12} />
+              )}
+            </button>
+            {expandedExercise === expandKey(currentStep.rep, currentStep.exerciseIndex) && (
+              <div className="w-full max-w-xs space-y-2">
+                <div className="grid grid-cols-3 gap-2">
+                  {currentExercise.targetReps != null && (
+                    <label className="block">
+                      <span className="text-xs text-gray-400">Reps</span>
+                      <input
+                        type="number"
+                        value={
+                          activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
+                            ?.actualReps ??
+                          currentExercise.targetReps ??
+                          ''
+                        }
+                        onChange={(e) =>
+                          updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
+                            actualReps: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                        className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                      />
+                    </label>
+                  )}
+                  {currentExercise.targetWeight != null && (
+                    <label className="block">
+                      <span className="text-xs text-gray-400">Weight</span>
+                      <input
+                        type="number"
+                        value={
+                          activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
+                            ?.actualWeight ??
+                          currentExercise.targetWeight ??
+                          ''
+                        }
+                        onChange={(e) =>
+                          updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
+                            actualWeight: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                        className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                      />
+                    </label>
+                  )}
+                  {currentExercise.targetDuration != null && (
+                    <label className="block">
+                      <span className="text-xs text-gray-400">Duration</span>
+                      <input
+                        type="number"
+                        value={
+                          activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
+                            ?.actualDuration ??
+                          currentExercise.targetDuration ??
+                          ''
+                        }
+                        onChange={(e) =>
+                          updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
+                            actualDuration: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                        className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
+        ) : null}
       </div>
 
-      {/* Bottom action bar */}
-      {allExercisesDone && (
-        <div className="border-t border-gray-200 bg-white p-4">
-          {isLastSet ? (
+      {/* Bottom controls */}
+      <div className="border-t border-gray-200 bg-white p-4">
+        {allSetsDone ? (
+          <button
+            onClick={completeSession}
+            className="w-full rounded-xl bg-green-600 py-3 text-sm font-semibold text-white hover:bg-green-700 transition-colors"
+          >
+            Complete Session
+          </button>
+        ) : currentSetDone ? null : (
+          <div className="flex gap-3">
+            {/* Pause/Resume — only shown during countdowns */}
+            {countdown !== null && countdown > 0 && (
+              <button
+                onClick={() => setIsPaused(!isPaused)}
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-700"
+              >
+                {isPaused ? <Play size={20} /> : <Pause size={20} />}
+              </button>
+            )}
+
+            {/* Main action */}
+            {isExerciseStep && !currentStep.timed ? (
+              <button
+                onClick={handleDone}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-semibold text-white"
+              >
+                <Check size={18} />
+                Done
+              </button>
+            ) : (
+              <div className="flex-1" />
+            )}
+
+            {/* Skip */}
             <button
-              onClick={completeSession}
-              className="w-full rounded-xl bg-green-600 py-3 text-sm font-semibold text-white hover:bg-green-700 transition-colors"
+              onClick={skip}
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"
             >
-              Complete Session
+              <SkipForward size={20} />
             </button>
-          ) : (
-            <button
-              onClick={startNextSet}
-              className="w-full rounded-xl bg-primary-600 py-3 text-sm font-semibold text-white hover:bg-primary-700 transition-colors"
-            >
-              Start Next Set
-            </button>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -46,8 +46,18 @@ function PlannedView({
 }) {
   const exercises = session.sets[0]?.exercises ?? []
 
+  const reps = session.sets[0]?.reps ?? 1
+  const restDuration = session.sets[0]?.restDuration ?? 0
+
   async function startSession() {
+    const sets = session.sets.map((set) => ({
+      ...set,
+      instanceData: Array.from({ length: set.reps }, () =>
+        set.exercises.map(() => ({ completed: false })),
+      ),
+    }))
     await db.sessions.update(session.id, {
+      sets,
       status: 'in_progress' as const,
       startedAt: new Date(),
     })
@@ -72,6 +82,8 @@ function PlannedView({
           <p className="text-sm text-blue-700 font-medium">
             {session.sets.length} {session.sets.length === 1 ? 'set' : 'sets'} &middot;{' '}
             {exercises.length} {exercises.length === 1 ? 'exercise' : 'exercises'}
+            {reps > 1 && ` · ${reps} reps/set`}
+            {restDuration > 0 && ` · ${formatDuration(restDuration)} rest`}
           </p>
         </div>
 
@@ -146,43 +158,66 @@ function CompletedView({
           <section key={setIdx}>
             <h2 className="mb-2 text-sm font-semibold text-gray-700">
               Set {setIdx + 1}
+              {set.restDuration > 0 && (
+                <span className="font-normal text-gray-400"> · {formatDuration(set.restDuration)} rest</span>
+              )}
             </h2>
-            <ul className="space-y-2">
-              {set.exercises.map((ex, exIdx) => (
-                <li
-                  key={exIdx}
-                  className={cn(
-                    'rounded-lg border bg-white p-3',
-                    ex.completed ? 'border-green-200' : 'border-gray-200',
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    {ex.completed && (
-                      <Check size={14} className="text-green-500 shrink-0" />
-                    )}
-                    <p className="font-medium text-sm">{ex.name}</p>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {[
-                      ex.actualReps && `${ex.actualReps} reps`,
-                      ex.actualWeight && `${ex.actualWeight}kg`,
-                      ex.actualDuration && `${ex.actualDuration}s`,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    {ex.targetReps && ex.actualReps !== ex.targetReps && (
-                      <span className="text-gray-400"> (target: {ex.targetReps})</span>
-                    )}
-                    {ex.targetWeight && ex.actualWeight !== ex.targetWeight && (
-                      <span className="text-gray-400"> (target: {ex.targetWeight}kg)</span>
-                    )}
+            {(set.instanceData ?? [[]]).map((repExercises, repIdx) => (
+              <div key={repIdx} className="mb-3">
+                {(set.reps > 1 || (set.instanceData?.length ?? 0) > 1) && (
+                  <p className="mb-1 text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Round {repIdx + 1}
                   </p>
-                  {ex.notes && (
-                    <p className="mt-1 text-xs text-gray-400">{ex.notes}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
+                )}
+                <ul className="space-y-2">
+                  {set.exercises.map((ex, exIdx) => {
+                    const instance = repExercises[exIdx]
+                    return (
+                      <li
+                        key={exIdx}
+                        className={cn(
+                          'rounded-lg border bg-white p-3',
+                          instance?.completed ? 'border-green-200' : 'border-gray-200',
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          {instance?.completed && (
+                            <Check size={14} className="text-green-500 shrink-0" />
+                          )}
+                          <p className="font-medium text-sm">{ex.name}</p>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {[
+                            instance?.actualReps && `${instance.actualReps} reps`,
+                            instance?.actualWeight && `${instance.actualWeight}kg`,
+                            instance?.actualDuration && `${instance.actualDuration}s`,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || (
+                            [
+                              ex.targetReps && `${ex.targetReps} reps`,
+                              ex.targetWeight && `${ex.targetWeight}kg`,
+                              ex.targetDuration && `${ex.targetDuration}s`,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')
+                          )}
+                          {ex.targetReps && instance?.actualReps && instance.actualReps !== ex.targetReps && (
+                            <span className="text-gray-400"> (target: {ex.targetReps})</span>
+                          )}
+                          {ex.targetWeight && instance?.actualWeight && instance.actualWeight !== ex.targetWeight && (
+                            <span className="text-gray-400"> (target: {ex.targetWeight}kg)</span>
+                          )}
+                        </p>
+                        {instance?.notes && (
+                          <p className="mt-1 text-xs text-gray-400">{instance.notes}</p>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            ))}
           </section>
         ))}
         {session.notes && (

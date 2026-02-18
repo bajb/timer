@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v4 as uuid } from 'uuid'
 import { X, Minus, Plus } from 'lucide-react'
-import { db, type Session, type SessionType, type SessionExercise, type SessionSet } from '../../db'
+import { db, type SessionType, type SessionExercise, type SessionSet, type Session } from '../../db'
+import { formatDuration } from '../../lib/utils'
 import ExerciseInput from './ExerciseInput'
 
 const SESSION_TYPES: { value: SessionType; label: string }[] = [
@@ -19,6 +20,49 @@ interface Props {
   onClose: () => void
 }
 
+function Stepper({
+  label,
+  value,
+  onChange,
+  step,
+  min,
+  max,
+  format,
+}: {
+  label: string
+  value: number
+  onChange: (v: number) => void
+  step: number
+  min: number
+  max: number
+  format?: (v: number) => string
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-3">
+      <span className="text-sm font-medium text-gray-700">{label}</span>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => onChange(Math.max(min, value - step))}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600 text-lg font-bold"
+        >
+          −
+        </button>
+        <span className="w-16 text-center font-semibold">
+          {format ? format(value) : value}
+        </span>
+        <button
+          type="button"
+          onClick={() => onChange(Math.min(max, value + step))}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600 text-lg font-bold"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function SessionForm({ clientId, session, onClose }: Props) {
   const clients = useLiveQuery(() => db.clients.orderBy('name').toArray(), [])
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? session?.clientId ?? '')
@@ -28,8 +72,9 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
   )
   const [notes, setNotes] = useState(session?.notes ?? '')
   const [setCount, setSetCount] = useState(session?.sets.length ?? 3)
+  const [restDuration, setRestDuration] = useState(session?.sets[0]?.restDuration ?? 30)
+  const [repsPerSet, setRepsPerSet] = useState(session?.sets[0]?.reps ?? 1)
   const [exercises, setExercises] = useState<SessionExercise[]>(
-    // For editing, pull exercises from the first set
     session?.sets[0]?.exercises.map((ex) => ({
       ...ex,
       completed: false,
@@ -45,6 +90,8 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
     const exerciseList = exercises.filter((ex) => ex.name.trim())
     const sets: SessionSet[] = Array.from({ length: setCount }, () => ({
       exercises: exerciseList.map((ex) => ({ ...ex, completed: false })),
+      restDuration,
+      reps: repsPerSet,
       completed: false,
     }))
 
@@ -134,26 +181,18 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
           />
         </label>
 
-        {/* Set count stepper */}
-        <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-3">
-          <span className="text-sm font-medium text-gray-700">Number of Sets</span>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setSetCount(Math.max(1, setCount - 1))}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600"
-            >
-              <Minus size={16} />
-            </button>
-            <span className="w-8 text-center font-semibold">{setCount}</span>
-            <button
-              type="button"
-              onClick={() => setSetCount(Math.min(20, setCount + 1))}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600"
-            >
-              <Plus size={16} />
-            </button>
-          </div>
+        <div className="space-y-2">
+          <Stepper label="Sets" value={setCount} onChange={setSetCount} step={1} min={1} max={20} />
+          <Stepper label="Reps per Set" value={repsPerSet} onChange={setRepsPerSet} step={1} min={1} max={20} />
+          <Stepper
+            label="Rest Between"
+            value={restDuration}
+            onChange={setRestDuration}
+            step={5}
+            min={0}
+            max={300}
+            format={(v) => (v === 0 ? 'None' : formatDuration(v))}
+          />
         </div>
 
         <ExerciseInput exercises={exercises} onChange={setExercises} />
