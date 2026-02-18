@@ -57,10 +57,17 @@ export interface ExerciseInstance {
   notes?: string
 }
 
+export type SetMode = 'circuit' | 'repeat'
+export type SetTimerMode = 'standard' | 'pyramid'
+
 export interface SessionSet {
+  mode: SetMode
   exercises: SessionExercise[]
   restDuration: number
   reps: number
+  timerMode: SetTimerMode
+  stepIncrement?: number
+  peakTime?: number
   completed: boolean
   instanceData?: ExerciseInstance[][]  // [rep][exerciseIdx]
 }
@@ -169,6 +176,21 @@ db.version(3)
               })),
             ]
           }
+        }
+      }),
+  )
+
+db.version(4)
+  .stores({})
+  .upgrade((tx) =>
+    tx
+      .table('sessions')
+      .toCollection()
+      .modify((session: Record<string, unknown>) => {
+        const sets = session.sets as Array<Record<string, unknown>>
+        for (const set of sets) {
+          set.mode ??= 'circuit'
+          set.timerMode ??= 'standard'
         }
       }),
   )

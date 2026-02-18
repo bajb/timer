@@ -14,6 +14,7 @@ import { useAudio } from '../../hooks/useAudio'
 import { useVibration } from '../../hooks/useVibration'
 import { useWakeLock } from '../../hooks/useWakeLock'
 import { useTimerStore } from '../../stores/timerStore'
+import { buildPyramidSteps } from '../../stores/timerStore'
 import ProgressRing from '../timer/ProgressRing'
 
 // --- Sequence types ---
@@ -24,17 +25,26 @@ type SequenceStep =
 
 function buildSequence(set: SessionSet): SequenceStep[] {
   const steps: SequenceStep[] = []
-  for (let rep = 0; rep < set.reps; rep++) {
+  const pyramidDurations =
+    set.timerMode === 'pyramid' && set.stepIncrement && set.peakTime
+      ? buildPyramidSteps(set.stepIncrement, set.peakTime)
+      : []
+  const reps = pyramidDurations.length > 0 ? pyramidDurations.length : set.reps
+
+  for (let rep = 0; rep < reps; rep++) {
+    const pyramidDuration = pyramidDurations[rep] ?? 0
     for (let ei = 0; ei < set.exercises.length; ei++) {
       const ex = set.exercises[ei]
+      // In pyramid mode, override duration with pyramid step duration
+      const duration = pyramidDuration > 0 ? pyramidDuration : (ex.targetDuration ?? 0)
       steps.push({
         type: 'exercise',
         exerciseIndex: ei,
         rep,
-        timed: (ex.targetDuration ?? 0) > 0,
-        duration: ex.targetDuration ?? 0,
+        timed: duration > 0,
+        duration,
       })
-      const isLast = rep === set.reps - 1 && ei === set.exercises.length - 1
+      const isLast = rep === reps - 1 && ei === set.exercises.length - 1
       if (!isLast && set.restDuration > 0) {
         steps.push({ type: 'rest', duration: set.restDuration, rep })
       }
@@ -313,147 +323,220 @@ export default function LiveSessionView({ session }: Props) {
       </header>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col items-center justify-center p-4 gap-4">
-        {currentSetDone ? (
-          /* Set complete state */
-          <div className="text-center">
-            <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-full bg-green-100 mb-3">
-              <Check size={32} className="text-green-600" />
-            </div>
-            <p className="font-semibold text-lg">Set Complete</p>
-            {!allSetsDone && (
-              <button
-                onClick={() => {
-                  const next = session.sets.findIndex((s, i) => i > activeSetIdx && !s.completed)
-                  if (next !== -1) setActiveSetIdx(next)
-                }}
-                className="mt-4 rounded-xl bg-primary-600 px-6 py-2.5 text-sm font-semibold text-white"
-              >
-                Next Set
-              </button>
-            )}
-          </div>
-        ) : isRestStep ? (
-          /* Rest phase */
-          <>
-            <div className="rounded-full bg-red-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
-              REST
-            </div>
-            <ProgressRing progress={progress} size={220} strokeWidth={10} color="#ef4444">
-              <div className="text-5xl font-bold tabular-nums">{countdown ?? 0}</div>
-            </ProgressRing>
-          </>
-        ) : isExerciseStep && currentExercise ? (
-          /* Exercise phase */
-          <>
-            <div className="rounded-full bg-green-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
-              {currentExercise.name.toUpperCase()}
-            </div>
-
-            {currentStep.timed && countdown !== null ? (
-              <ProgressRing progress={progress} size={220} strokeWidth={10} color="#22c55e">
-                <div className="text-5xl font-bold tabular-nums">{countdown}</div>
-              </ProgressRing>
-            ) : (
-              /* Non-timed exercise: show targets */
-              <div className="rounded-xl border border-gray-200 bg-white p-6 w-full max-w-xs text-center">
-                <p className="text-3xl font-bold mb-1">
-                  {[
-                    currentExercise.targetReps && `${currentExercise.targetReps} reps`,
-                    currentExercise.targetWeight && `${currentExercise.targetWeight}kg`,
-                  ]
-                    .filter(Boolean)
-                    .join(' × ')}
-                </p>
-                {currentExercise.notes && (
-                  <p className="text-sm text-gray-500">{currentExercise.notes}</p>
-                )}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {/* Active phase display */}
+        <div className="flex flex-col items-center p-4 gap-3 shrink-0">
+          {currentSetDone ? (
+            <div className="text-center">
+              <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-full bg-green-100 mb-3">
+                <Check size={32} className="text-green-600" />
               </div>
-            )}
-
-            {/* Expandable actual values editor */}
-            <button
-              onClick={() => {
-                const key = expandKey(currentStep.rep, currentStep.exerciseIndex)
-                setExpandedExercise(expandedExercise === key ? null : key)
-              }}
-              className="flex items-center gap-1 text-xs text-gray-400"
-            >
-              Edit actuals
-              {expandedExercise === expandKey(currentStep.rep, currentStep.exerciseIndex) ? (
-                <ChevronUp size={12} />
-              ) : (
-                <ChevronDown size={12} />
+              <p className="font-semibold text-lg">Set Complete</p>
+              {!allSetsDone && (
+                <button
+                  onClick={() => {
+                    const next = session.sets.findIndex((s, i) => i > activeSetIdx && !s.completed)
+                    if (next !== -1) setActiveSetIdx(next)
+                  }}
+                  className="mt-4 rounded-xl bg-primary-600 px-6 py-2.5 text-sm font-semibold text-white"
+                >
+                  Next Set
+                </button>
               )}
-            </button>
-            {expandedExercise === expandKey(currentStep.rep, currentStep.exerciseIndex) && (
-              <div className="w-full max-w-xs space-y-2">
-                <div className="grid grid-cols-3 gap-2">
-                  {currentExercise.targetReps != null && (
-                    <label className="block">
-                      <span className="text-xs text-gray-400">Reps</span>
-                      <input
-                        type="number"
-                        value={
-                          activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
-                            ?.actualReps ??
-                          currentExercise.targetReps ??
-                          ''
-                        }
-                        onChange={(e) =>
-                          updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
-                            actualReps: e.target.value ? Number(e.target.value) : undefined,
-                          })
-                        }
-                        className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-                      />
-                    </label>
+            </div>
+          ) : isRestStep ? (
+            <>
+              <div className="rounded-full bg-red-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
+                REST
+              </div>
+              <ProgressRing progress={progress} size={160} strokeWidth={8} color="#ef4444">
+                <div className="text-4xl font-bold tabular-nums">{countdown ?? 0}</div>
+              </ProgressRing>
+            </>
+          ) : isExerciseStep && currentExercise ? (
+            <>
+              <div className="rounded-full bg-green-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
+                {currentExercise.name.toUpperCase()}
+              </div>
+
+              {currentStep.timed && countdown !== null ? (
+                <>
+                  <ProgressRing progress={progress} size={160} strokeWidth={8} color="#22c55e">
+                    <div className="text-4xl font-bold tabular-nums">{countdown}</div>
+                  </ProgressRing>
+                  {(currentExercise.targetReps || currentExercise.targetWeight) && (
+                    <p className="text-sm text-gray-500">
+                      {[
+                        currentExercise.targetReps && `${currentExercise.targetReps} reps`,
+                        currentExercise.targetWeight && `${currentExercise.targetWeight}kg`,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
                   )}
-                  {currentExercise.targetWeight != null && (
-                    <label className="block">
-                      <span className="text-xs text-gray-400">Weight</span>
-                      <input
-                        type="number"
-                        value={
-                          activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
-                            ?.actualWeight ??
-                          currentExercise.targetWeight ??
-                          ''
-                        }
-                        onChange={(e) =>
-                          updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
-                            actualWeight: e.target.value ? Number(e.target.value) : undefined,
-                          })
-                        }
-                        className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-                      />
-                    </label>
-                  )}
-                  {currentExercise.targetDuration != null && (
-                    <label className="block">
-                      <span className="text-xs text-gray-400">Duration</span>
-                      <input
-                        type="number"
-                        value={
-                          activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
-                            ?.actualDuration ??
-                          currentExercise.targetDuration ??
-                          ''
-                        }
-                        onChange={(e) =>
-                          updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
-                            actualDuration: e.target.value ? Number(e.target.value) : undefined,
-                          })
-                        }
-                        className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-                      />
-                    </label>
+                </>
+              ) : (
+                <div className="rounded-xl border border-gray-200 bg-white p-4 w-full max-w-xs text-center">
+                  <p className="text-2xl font-bold mb-1">
+                    {[
+                      currentExercise.targetReps && `${currentExercise.targetReps} reps`,
+                      currentExercise.targetWeight && `${currentExercise.targetWeight}kg`,
+                    ]
+                      .filter(Boolean)
+                      .join(' × ')}
+                  </p>
+                  {currentExercise.notes && (
+                    <p className="text-sm text-gray-500">{currentExercise.notes}</p>
                   )}
                 </div>
+              )}
+
+              <button
+                onClick={() => {
+                  const key = expandKey(currentStep.rep, currentStep.exerciseIndex)
+                  setExpandedExercise(expandedExercise === key ? null : key)
+                }}
+                className="flex items-center gap-1 text-xs text-gray-400"
+              >
+                Edit actuals
+                {expandedExercise === expandKey(currentStep.rep, currentStep.exerciseIndex) ? (
+                  <ChevronUp size={12} />
+                ) : (
+                  <ChevronDown size={12} />
+                )}
+              </button>
+              {expandedExercise === expandKey(currentStep.rep, currentStep.exerciseIndex) && (
+                <div className="w-full max-w-xs space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    {currentExercise.targetReps != null && (
+                      <label className="block">
+                        <span className="text-xs text-gray-400">Reps</span>
+                        <input
+                          type="number"
+                          value={
+                            activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
+                              ?.actualReps ??
+                            currentExercise.targetReps ??
+                            ''
+                          }
+                          onChange={(e) =>
+                            updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
+                              actualReps: e.target.value ? Number(e.target.value) : undefined,
+                            })
+                          }
+                          className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                        />
+                      </label>
+                    )}
+                    {currentExercise.targetWeight != null && (
+                      <label className="block">
+                        <span className="text-xs text-gray-400">Weight</span>
+                        <input
+                          type="number"
+                          value={
+                            activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
+                              ?.actualWeight ??
+                            currentExercise.targetWeight ??
+                            ''
+                          }
+                          onChange={(e) =>
+                            updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
+                              actualWeight: e.target.value ? Number(e.target.value) : undefined,
+                            })
+                          }
+                          className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                        />
+                      </label>
+                    )}
+                    {currentExercise.targetDuration != null && (
+                      <label className="block">
+                        <span className="text-xs text-gray-400">Duration</span>
+                        <input
+                          type="number"
+                          value={
+                            activeSet.instanceData?.[currentStep.rep]?.[currentStep.exerciseIndex]
+                              ?.actualDuration ??
+                            currentExercise.targetDuration ??
+                            ''
+                          }
+                          onChange={(e) =>
+                            updateInstanceField(currentStep.rep, currentStep.exerciseIndex, {
+                              actualDuration: e.target.value ? Number(e.target.value) : undefined,
+                            })
+                          }
+                          className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : null}
+        </div>
+
+        {/* Set overview — full exercise list */}
+        {!currentSetDone && (
+          <div className="flex-1 overflow-y-auto border-t border-gray-100 px-4 py-3">
+            {Array.from({ length: activeSet.reps }, (_, rep) => (
+              <div key={rep} className="mb-3 last:mb-0">
+                {totalReps > 1 && (
+                  <p className="mb-1.5 text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Round {rep + 1}
+                  </p>
+                )}
+                <ul className="space-y-1.5">
+                  {activeSet.exercises.map((ex, ei) => {
+                    const inst = activeSet.instanceData?.[rep]?.[ei]
+                    const isCurrent =
+                      isExerciseStep &&
+                      currentStep.rep === rep &&
+                      currentStep.exerciseIndex === ei
+                    const isCurrentRest =
+                      isRestStep &&
+                      currentStep.rep === rep &&
+                      sequence[stepIndex + 1]?.type === 'exercise' &&
+                      (sequence[stepIndex + 1] as { exerciseIndex: number }).exerciseIndex === ei
+
+                    return (
+                      <li
+                        key={ei}
+                        className={cn(
+                          'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
+                          isCurrent
+                            ? 'bg-green-50 border border-green-300 font-semibold text-green-800'
+                            : isCurrentRest
+                              ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                              : inst?.completed
+                                ? 'bg-gray-50 text-gray-400'
+                                : 'bg-white border border-gray-100 text-gray-700',
+                        )}
+                      >
+                        {inst?.completed ? (
+                          <Check size={14} className="text-green-500 shrink-0" />
+                        ) : isCurrent ? (
+                          <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-green-500 animate-pulse" />
+                        ) : (
+                          <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-gray-300" />
+                        )}
+                        <span className="flex-1 truncate">{ex.name}</span>
+                        <span className="shrink-0 text-xs opacity-70">
+                          {[
+                            ex.targetReps && `${ex.targetReps}r`,
+                            ex.targetWeight && `${ex.targetWeight}kg`,
+                            ex.targetDuration && `${ex.targetDuration}s`,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ul>
               </div>
-            )}
-          </>
-        ) : null}
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Bottom controls */}

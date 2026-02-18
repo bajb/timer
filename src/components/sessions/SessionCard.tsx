@@ -26,6 +26,7 @@ export default function SessionCard({ session }: { session: Session }) {
     .join(', ')
   const setCount = session.sets.length
   const reps = session.sets[0]?.reps ?? 1
+  const hasPyramid = session.sets.some((s) => s.timerMode === 'pyramid')
 
   return (
     <button
@@ -52,6 +53,7 @@ export default function SessionCard({ session }: { session: Session }) {
           <p className="text-xs text-gray-400 truncate mt-0.5">
             {exerciseNames} &middot; {setCount} {setCount === 1 ? 'set' : 'sets'}
             {reps > 1 && ` · ${reps}x`}
+            {hasPyramid && ' · Pyramid'}
           </p>
         )}
       </div>

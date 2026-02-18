@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { ArrowLeft, Play, Check, RotateCcw, Copy } from 'lucide-react'
 import { v4 as uuid } from 'uuid'
 import { db, type Session, type Client } from '../db'
+import { buildPyramidSteps } from '../stores/timerStore'
 import { formatDate, formatDuration, cn } from '../lib/utils'
 import LiveSessionView from '../components/sessions/LiveSessionView'
 
@@ -47,16 +48,26 @@ function PlannedView({
 }) {
   const exercises = session.sets[0]?.exercises ?? []
 
-  const reps = session.sets[0]?.reps ?? 1
-  const restDuration = session.sets[0]?.restDuration ?? 0
+  const firstSet = session.sets[0]
+  const reps = firstSet?.reps ?? 1
+  const restDuration = firstSet?.restDuration ?? 0
+  const isPyramid = firstSet?.timerMode === 'pyramid'
 
   async function startSession() {
-    const sets = session.sets.map((set) => ({
-      ...set,
-      instanceData: Array.from({ length: set.reps }, () =>
-        set.exercises.map(() => ({ completed: false })),
-      ),
-    }))
+    const sets = session.sets.map((set) => {
+      const pyramidSteps =
+        set.timerMode === 'pyramid' && set.stepIncrement && set.peakTime
+          ? buildPyramidSteps(set.stepIncrement, set.peakTime)
+          : []
+      const reps = pyramidSteps.length > 0 ? pyramidSteps.length : set.reps
+      return {
+        ...set,
+        reps,
+        instanceData: Array.from({ length: reps }, () =>
+          set.exercises.map(() => ({ completed: false })),
+        ),
+      }
+    })
     await db.sessions.update(session.id, {
       sets,
       status: 'in_progress' as const,
@@ -83,7 +94,8 @@ function PlannedView({
           <p className="text-sm text-blue-700 font-medium">
             {session.sets.length} {session.sets.length === 1 ? 'set' : 'sets'} &middot;{' '}
             {exercises.length} {exercises.length === 1 ? 'exercise' : 'exercises'}
-            {reps > 1 && ` · ${reps} reps/set`}
+            {isPyramid && ' · Pyramid'}
+            {!isPyramid && reps > 1 && ` · ${reps} reps/set`}
             {restDuration > 0 && ` · ${formatDuration(restDuration)} rest`}
           </p>
         </div>
@@ -157,9 +169,13 @@ function CompletedView({
     // Clone the session plan with today's date, fresh status
     const newId = uuid()
     const sets = session.sets.map((set) => ({
+      mode: set.mode,
       exercises: set.exercises.map((ex) => ({ ...ex, completed: false })),
       restDuration: set.restDuration,
       reps: set.reps,
+      timerMode: set.timerMode,
+      stepIncrement: set.stepIncrement,
+      peakTime: set.peakTime,
       completed: false,
     }))
     await db.sessions.add({
