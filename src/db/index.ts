@@ -5,6 +5,7 @@ import Dexie, { type EntityTable } from 'dexie'
 export type MetricType = 'weight' | 'reps' | 'time' | 'distance' | 'custom'
 export type GoalStatus = 'active' | 'achieved' | 'paused' | 'abandoned'
 export type SessionType = 'strength' | 'cardio' | 'hiit' | 'flexibility' | 'custom'
+export type SessionStatus = 'planned' | 'in_progress' | 'completed'
 
 export interface Client {
   id: string
@@ -39,13 +40,21 @@ export interface GoalCheckIn {
   recordedAt: Date
 }
 
-export interface Exercise {
+export interface SessionExercise {
   name: string
-  sets?: number
-  reps?: number
-  weight?: number
-  duration?: number
+  targetReps?: number
+  targetWeight?: number
+  targetDuration?: number
+  actualReps?: number
+  actualWeight?: number
+  actualDuration?: number
+  completed: boolean
   notes?: string
+}
+
+export interface SessionSet {
+  exercises: SessionExercise[]
+  completed: boolean
 }
 
 export interface HIITConfig {
@@ -61,8 +70,11 @@ export interface Session {
   date: Date
   type: SessionType
   notes?: string
-  exercises: Exercise[]
+  sets: SessionSet[]
   hiitConfig?: HIITConfig
+  status: SessionStatus
+  startedAt?: Date
+  completedAt?: Date
   duration?: number
   createdAt: Date
 }
@@ -82,5 +94,36 @@ db.version(1).stores({
   goalCheckIns: 'id, goalId, sessionId, recordedAt',
   sessions: 'id, clientId, date, type, createdAt',
 })
+
+db.version(2)
+  .stores({
+    sessions: 'id, clientId, date, type, status, createdAt',
+  })
+  .upgrade((tx) =>
+    tx
+      .table('sessions')
+      .toCollection()
+      .modify((session: Record<string, unknown>) => {
+        const oldExercises = (session.exercises as Array<Record<string, unknown>>) ?? []
+        session.sets = [
+          {
+            exercises: oldExercises.map((ex) => ({
+              name: ex.name,
+              targetReps: ex.reps,
+              targetWeight: ex.weight,
+              targetDuration: ex.duration,
+              actualReps: ex.reps,
+              actualWeight: ex.weight,
+              actualDuration: ex.duration,
+              completed: true,
+              notes: ex.notes,
+            })),
+            completed: true,
+          },
+        ]
+        session.status = 'completed'
+        delete session.exercises
+      }),
+  )
 
 export { db }

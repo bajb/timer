@@ -1,15 +1,15 @@
 import { Trash2, Plus } from 'lucide-react'
-import type { Exercise } from '../../db'
+import type { SessionExercise } from '../../db'
 
 interface Props {
-  exercises: Exercise[]
-  onChange: (exercises: Exercise[]) => void
+  exercises: SessionExercise[]
+  onChange: (exercises: SessionExercise[]) => void
 }
 
-const emptyExercise = (): Exercise => ({ name: '' })
+const empty = (): SessionExercise => ({ name: '', completed: false })
 
 export default function ExerciseInput({ exercises, onChange }: Props) {
-  function update(index: number, patch: Partial<Exercise>) {
+  function update(index: number, patch: Partial<SessionExercise>) {
     const next = exercises.map((ex, i) => (i === index ? { ...ex, ...patch } : ex))
     onChange(next)
   }
@@ -19,7 +19,7 @@ export default function ExerciseInput({ exercises, onChange }: Props) {
   }
 
   function add() {
-    onChange([...exercises, emptyExercise()])
+    onChange([...exercises, empty()])
   }
 
   return (
@@ -54,33 +54,26 @@ export default function ExerciseInput({ exercises, onChange }: Props) {
               <Trash2 size={16} />
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <input
-              type="number"
-              placeholder="Sets"
-              value={ex.sets ?? ''}
-              onChange={(e) => update(i, { sets: e.target.value ? Number(e.target.value) : undefined })}
-              className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
-            />
+          <div className="grid grid-cols-3 gap-2">
             <input
               type="number"
               placeholder="Reps"
-              value={ex.reps ?? ''}
-              onChange={(e) => update(i, { reps: e.target.value ? Number(e.target.value) : undefined })}
+              value={ex.targetReps ?? ''}
+              onChange={(e) => update(i, { targetReps: e.target.value ? Number(e.target.value) : undefined })}
               className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
             />
             <input
               type="number"
               placeholder="Weight (kg)"
-              value={ex.weight ?? ''}
-              onChange={(e) => update(i, { weight: e.target.value ? Number(e.target.value) : undefined })}
+              value={ex.targetWeight ?? ''}
+              onChange={(e) => update(i, { targetWeight: e.target.value ? Number(e.target.value) : undefined })}
               className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
             />
             <input
               type="number"
               placeholder="Duration (s)"
-              value={ex.duration ?? ''}
-              onChange={(e) => update(i, { duration: e.target.value ? Number(e.target.value) : undefined })}
+              value={ex.targetDuration ?? ''}
+              onChange={(e) => update(i, { targetDuration: e.target.value ? Number(e.target.value) : undefined })}
               className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
             />
           </div>

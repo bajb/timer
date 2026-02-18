@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v4 as uuid } from 'uuid'
-import { X } from 'lucide-react'
-import { db, type Session, type SessionType, type Exercise } from '../../db'
+import { X, Minus, Plus } from 'lucide-react'
+import { db, type Session, type SessionType, type SessionExercise, type SessionSet } from '../../db'
 import ExerciseInput from './ExerciseInput'
 
 const SESSION_TYPES: { value: SessionType; label: string }[] = [
@@ -27,7 +27,14 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
     (session?.date ?? new Date()).toISOString().slice(0, 10),
   )
   const [notes, setNotes] = useState(session?.notes ?? '')
-  const [exercises, setExercises] = useState<Exercise[]>(session?.exercises ?? [])
+  const [setCount, setSetCount] = useState(session?.sets.length ?? 3)
+  const [exercises, setExercises] = useState<SessionExercise[]>(
+    // For editing, pull exercises from the first set
+    session?.sets[0]?.exercises.map((ex) => ({
+      ...ex,
+      completed: false,
+    })) ?? [],
+  )
 
   const isEdit = !!session
 
@@ -35,12 +42,18 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
     e.preventDefault()
     if (!selectedClientId) return
 
+    const exerciseList = exercises.filter((ex) => ex.name.trim())
+    const sets: SessionSet[] = Array.from({ length: setCount }, () => ({
+      exercises: exerciseList.map((ex) => ({ ...ex, completed: false })),
+      completed: false,
+    }))
+
     const data = {
       clientId: selectedClientId,
       type,
       date: new Date(date),
       notes: notes.trim() || undefined,
-      exercises: exercises.filter((ex) => ex.name.trim()),
+      sets,
     }
 
     if (isEdit) {
@@ -49,6 +62,7 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
       await db.sessions.add({
         id: uuid(),
         ...data,
+        status: 'planned' as const,
         createdAt: new Date(),
       })
     }
@@ -64,7 +78,7 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
       >
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">
-            {isEdit ? 'Edit Session' : 'New Session'}
+            {isEdit ? 'Edit Session' : 'Plan Session'}
           </h2>
           <button type="button" onClick={onClose} className="text-gray-400">
             <X size={20} />
@@ -120,6 +134,28 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
           />
         </label>
 
+        {/* Set count stepper */}
+        <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-3">
+          <span className="text-sm font-medium text-gray-700">Number of Sets</span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSetCount(Math.max(1, setCount - 1))}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600"
+            >
+              <Minus size={16} />
+            </button>
+            <span className="w-8 text-center font-semibold">{setCount}</span>
+            <button
+              type="button"
+              onClick={() => setSetCount(Math.min(20, setCount + 1))}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600"
+            >
+              <Plus size={16} />
+            </button>
+          </div>
+        </div>
+
         <ExerciseInput exercises={exercises} onChange={setExercises} />
 
         <label className="block">
@@ -137,7 +173,7 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
           type="submit"
           className="w-full rounded-lg bg-primary-600 py-2.5 text-sm font-medium text-white hover:bg-primary-700 transition-colors"
         >
-          {isEdit ? 'Save Changes' : 'Log Session'}
+          {isEdit ? 'Save Changes' : 'Plan Session'}
         </button>
       </form>
     </div>
