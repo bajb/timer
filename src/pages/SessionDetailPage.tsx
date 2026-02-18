@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ArrowLeft, Play, Check } from 'lucide-react'
+import { ArrowLeft, Play, Check, RotateCcw, Copy } from 'lucide-react'
+import { v4 as uuid } from 'uuid'
 import { db, type Session, type Client } from '../db'
 import { formatDate, formatDuration, cn } from '../lib/utils'
 import LiveSessionView from '../components/sessions/LiveSessionView'
@@ -139,6 +140,41 @@ function CompletedView({
   client?: Client
   onBack: () => void
 }) {
+  const navigate = useNavigate()
+
+  async function resumeSession() {
+    // Reset completed status — put back to in_progress so the user can continue
+    const sets = session.sets.map((s) => ({ ...s, completed: false }))
+    await db.sessions.update(session.id, {
+      sets,
+      status: 'in_progress' as const,
+      completedAt: undefined,
+      duration: undefined,
+    })
+  }
+
+  async function repeatSession() {
+    // Clone the session plan with today's date, fresh status
+    const newId = uuid()
+    const sets = session.sets.map((set) => ({
+      exercises: set.exercises.map((ex) => ({ ...ex, completed: false })),
+      restDuration: set.restDuration,
+      reps: set.reps,
+      completed: false,
+    }))
+    await db.sessions.add({
+      id: newId,
+      clientId: session.clientId,
+      type: session.type,
+      date: new Date(),
+      notes: session.notes,
+      sets,
+      status: 'planned' as const,
+      createdAt: new Date(),
+    })
+    navigate(`/sessions/${newId}`)
+  }
+
   return (
     <div className="flex flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-3">
@@ -226,6 +262,23 @@ function CompletedView({
             <p className="text-sm text-gray-600">{session.notes}</p>
           </section>
         )}
+      </div>
+
+      <div className="border-t border-gray-200 bg-white p-4 flex gap-3">
+        <button
+          onClick={resumeSession}
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          <RotateCcw size={16} />
+          Resume
+        </button>
+        <button
+          onClick={repeatSession}
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary-600 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 transition-colors"
+        >
+          <Copy size={16} />
+          Repeat
+        </button>
       </div>
     </div>
   )
