@@ -271,6 +271,24 @@ export default function LiveSessionView({ session }: Props) {
     setCountdown(null)
   }
 
+  async function redoSet() {
+    const sets = session.sets.map((s, si) => {
+      if (si !== activeSetIdx) return s
+      return {
+        ...s,
+        completed: false,
+        instanceData: (s.instanceData ?? []).map((repData) =>
+          repData.map(() => ({ completed: false })),
+        ),
+      }
+    })
+    await db.sessions.update(session.id, { sets })
+    setStepIndex(0)
+    setCountdown(null)
+    setIsPaused(false)
+    prevStepRef.current = ''
+  }
+
   async function handleDone() {
     if (!currentStep || currentStep.type !== 'exercise') return
     await completeExercise(currentStep.rep, currentStep.exerciseIndex)
@@ -370,17 +388,25 @@ export default function LiveSessionView({ session }: Props) {
                 <Check size={32} className="text-green-600" />
               </div>
               <p className="font-semibold text-lg">Set Complete</p>
-              {!allSetsDone && (
+              <div className="mt-4 flex gap-3 justify-center">
                 <button
-                  onClick={() => {
-                    const next = session.sets.findIndex((s, i) => i > activeSetIdx && !s.completed)
-                    if (next !== -1) setActiveSetIdx(next)
-                  }}
-                  className="mt-4 rounded-xl bg-primary-600 px-6 py-2.5 text-sm font-semibold text-white"
+                  onClick={redoSet}
+                  className="rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
-                  Next Set
+                  Redo Set
                 </button>
-              )}
+                {!allSetsDone && (
+                  <button
+                    onClick={() => {
+                      const next = session.sets.findIndex((s, i) => i > activeSetIdx && !s.completed)
+                      if (next !== -1) setActiveSetIdx(next)
+                    }}
+                    className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white"
+                  >
+                    Next Set
+                  </button>
+                )}
+              </div>
             </div>
           ) : isRestStep ? (
             <>
