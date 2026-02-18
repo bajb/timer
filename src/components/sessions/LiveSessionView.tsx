@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronUp,
@@ -7,6 +9,7 @@ import {
   Pause,
   Play,
   SkipForward,
+  Undo2,
 } from 'lucide-react'
 import { db, type Session, type SessionSet, type ExerciseInstance } from '../../db'
 import { formatDuration, cn } from '../../lib/utils'
@@ -80,6 +83,7 @@ interface Props {
 }
 
 export default function LiveSessionView({ session }: Props) {
+  const navigate = useNavigate()
   const [activeSetIdx, setActiveSetIdx] = useState(() => {
     const idx = session.sets.findIndex((s) => !s.completed)
     return idx === -1 ? session.sets.length - 1 : idx
@@ -233,6 +237,32 @@ export default function LiveSessionView({ session }: Props) {
     await db.sessions.update(session.id, { sets })
   }
 
+  async function uncompleteExercise(rep: number, exerciseIndex: number) {
+    const sets = session.sets.map((s, si) => {
+      if (si !== activeSetIdx) return s
+      const instanceData = (s.instanceData ?? []).map((repData, ri) =>
+        repData.map((inst, ei) =>
+          ri === rep && ei === exerciseIndex ? { ...inst, completed: false } : inst,
+        ),
+      )
+      return { ...s, instanceData, completed: false }
+    })
+    await db.sessions.update(session.id, { sets })
+  }
+
+  function jumpToExercise(rep: number, exerciseIndex: number) {
+    // Find the step index for this exercise in the sequence
+    const idx = sequence.findIndex(
+      (s) => s.type === 'exercise' && s.rep === rep && s.exerciseIndex === exerciseIndex,
+    )
+    if (idx !== -1) {
+      setCountdown(null)
+      setIsPaused(false)
+      prevStepRef.current = '' // allow auto-start to re-trigger
+      setStepIndex(idx)
+    }
+  }
+
   async function markSetComplete() {
     const sets = session.sets.map((s, si) =>
       si === activeSetIdx ? { ...s, completed: true } : s,
@@ -293,7 +323,15 @@ export default function LiveSessionView({ session }: Props) {
       {/* Header */}
       <header className="border-b border-gray-200 bg-white px-4 py-3">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold capitalize">{session.type} Session</h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate(-1)}
+              className="text-gray-500"
+            >
+              <ArrowLeft size={20} />
+            </button>
+            <h1 className="text-lg font-semibold capitalize">{session.type} Session</h1>
+          </div>
           <div className="flex items-center gap-1.5 text-sm font-medium text-gray-600">
             <Clock size={14} />
             {formatDuration(elapsed)}
@@ -501,19 +539,25 @@ export default function LiveSessionView({ session }: Props) {
                     return (
                       <li
                         key={ei}
+                        onClick={() => {
+                          if (inst?.completed) {
+                            uncompleteExercise(rep, ei)
+                          }
+                          jumpToExercise(rep, ei)
+                        }}
                         className={cn(
-                          'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
+                          'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer',
                           isCurrent
                             ? 'bg-green-50 border border-green-300 font-semibold text-green-800'
                             : isCurrentRest
                               ? 'bg-amber-50 border border-amber-200 text-amber-700'
                               : inst?.completed
-                                ? 'bg-gray-50 text-gray-400'
-                                : 'bg-white border border-gray-100 text-gray-700',
+                                ? 'bg-gray-50 text-gray-400 hover:bg-gray-100'
+                                : 'bg-white border border-gray-100 text-gray-700 hover:bg-gray-50',
                         )}
                       >
                         {inst?.completed ? (
-                          <Check size={14} className="text-green-500 shrink-0" />
+                          <Undo2 size={14} className="text-gray-400 shrink-0" />
                         ) : isCurrent ? (
                           <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-green-500 animate-pulse" />
                         ) : (
