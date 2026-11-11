@@ -6,11 +6,13 @@ import { useVibration } from '../../hooks/useVibration'
 import { useWakeLock } from '../../hooks/useWakeLock'
 import { formatDuration } from '../../lib/utils'
 import ProgressRing from './ProgressRing'
+import SetTimeline from './SetTimeline'
+import { hiitBlocks } from '../../stores/timerStore'
 
 export default function TimerRunning() {
   const { phase, timeRemaining, currentRound, config, isPaused, audioEnabled, vibrationEnabled, pause, resume, stop, tick } =
     useTimerStore()
-  const intervalRef = useRef<ReturnType<typeof setInterval>>()
+  const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined)
   const prevPhaseRef = useRef(phase)
 
   const { tickBeep, phaseChangeBeep, completeBeep } = useAudio(audioEnabled)
@@ -85,6 +87,13 @@ export default function TimerRunning() {
           <span className="text-gray-400"> &middot; {formatDuration(currentStepDuration)}</span>
         )}
       </p>
+
+      <SetTimeline
+        className="w-full max-w-md"
+        blocks={hiitBlocks(config)}
+        activeIndex={(currentRound - 1) * (config.restTime > 0 ? 2 : 1) + (phase === 'rest' ? 1 : 0)}
+        activeRemaining={progress}
+      />
 
       <div className="flex gap-4">
         <button

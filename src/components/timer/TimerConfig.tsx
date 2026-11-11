@@ -1,4 +1,5 @@
-import { useTimerStore, buildPyramidSteps } from '../../stores/timerStore'
+import { useTimerStore, hiitBlocks } from '../../stores/timerStore'
+import SetTimeline from './SetTimeline'
 import { Play } from 'lucide-react'
 import { formatDuration, cn } from '../../lib/utils'
 
@@ -60,16 +61,7 @@ export default function TimerConfig() {
   const setConfig = useTimerStore((s) => s.setConfig)
   const start = useTimerStore((s) => s.start)
 
-  const pyramidSteps =
-    config.mode === 'pyramid'
-      ? buildPyramidSteps(config.stepIncrement, config.peakTime)
-      : []
-
-  const totalSeconds =
-    config.mode === 'pyramid'
-      ? pyramidSteps.reduce((a, b) => a + b, 0) +
-        config.restTime * Math.max(0, pyramidSteps.length - 1)
-      : (config.exerciseTime + config.restTime) * config.rounds
+  const blocks = hiitBlocks(config)
 
   return (
     <div className="flex flex-1 flex-col p-4">
@@ -192,28 +184,9 @@ export default function TimerConfig() {
         )}
       </div>
 
-      {/* Pyramid sequence preview */}
-      {config.mode === 'pyramid' && pyramidSteps.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 mb-4">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
-            Sequence ({pyramidSteps.length} steps)
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {pyramidSteps.map((d, i) => (
-              <span
-                key={i}
-                className="rounded-md bg-white border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700"
-              >
-                {formatDuration(d)}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="mb-6 text-center">
-        <span className="text-sm text-gray-500">Total Time: </span>
-        <span className="font-semibold">{formatDuration(totalSeconds)}</span>
+      {/* Visual preview */}
+      <div className="rounded-xl border border-gray-200 bg-white p-3 mb-6">
+        <SetTimeline blocks={blocks} />
       </div>
 
       <button

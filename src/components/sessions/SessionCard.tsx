@@ -1,8 +1,7 @@
 import { useNavigate } from 'react-router-dom'
-import { useLiveQuery } from 'dexie-react-hooks'
 import { ChevronRight } from 'lucide-react'
-import { db, type Session, type SessionStatus } from '../../db'
-import { formatDate, formatDuration, cn } from '../../lib/utils'
+import { type Session, type SessionStatus } from '../../db'
+import { formatDuration, cn } from '../../lib/utils'
 
 const STATUS_BADGE: Record<SessionStatus, string> = {
   planned: 'bg-blue-50 text-blue-700',
@@ -18,14 +17,13 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
 
 export default function SessionCard({ session }: { session: Session }) {
   const navigate = useNavigate()
-  const client = useLiveQuery(() => db.clients.get(session.clientId), [session.clientId])
 
-  const exerciseNames = session.sets[0]?.exercises
-    .map((e) => e.name)
+  // Each set's exercises, e.g. "Legs, Arms | Core, Back"
+  const exerciseNames = session.sets
+    .map((s) => s.exercises.map((e) => e.name).filter(Boolean).join(', '))
     .filter(Boolean)
-    .join(', ')
+    .join(' | ')
   const setCount = session.sets.length
-  const reps = session.sets[0]?.reps ?? 1
   const hasPyramid = session.sets.some((s) => s.timerMode === 'pyramid')
 
   return (
@@ -35,7 +33,7 @@ export default function SessionCard({ session }: { session: Session }) {
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <p className="font-medium capitalize">{session.type}</p>
+          <p className="font-medium truncate">{session.name || <span className="capitalize">{session.type}</span>}</p>
           <span
             className={cn(
               'rounded-full px-2 py-0.5 text-xs font-medium',
@@ -46,14 +44,13 @@ export default function SessionCard({ session }: { session: Session }) {
           </span>
         </div>
         <p className="text-xs text-gray-500 truncate">
-          {client?.name ?? 'Unknown client'} &middot; {formatDate(session.date)}
+          <span className="capitalize">{session.type}</span>
           {session.duration != null && ` · ${formatDuration(session.duration)}`}
         </p>
         {exerciseNames && (
           <p className="text-xs text-gray-400 truncate mt-0.5">
-            {exerciseNames} &middot; {setCount} {setCount === 1 ? 'set' : 'sets'}
-            {reps > 1 && ` · ${reps}x`}
-            {hasPyramid && ' · Pyramid'}
+            {setCount} {setCount === 1 ? 'set' : 'sets'}
+            {hasPyramid && ' · Pyramid'} &middot; {exerciseNames}
           </p>
         )}
       </div>

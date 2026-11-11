@@ -58,16 +58,21 @@ export interface ExerciseInstance {
 }
 
 export type SetMode = 'circuit' | 'repeat'
-export type SetTimerMode = 'standard' | 'pyramid'
+export type SetTimerMode = 'none' | 'standard' | 'pyramid'
+export type PyramidStyle = 'all' | 'alternate'
 
 export interface SessionSet {
   mode: SetMode
   exercises: SessionExercise[]
   restDuration: number
+  exerciseDuration?: number
+  exerciseReps?: number
   reps: number
   timerMode: SetTimerMode
   stepIncrement?: number
   peakTime?: number
+  /** Pyramid only: 'all' runs every exercise at each step; 'alternate' rotates one exercise per step. Default 'all'. */
+  pyramidStyle?: PyramidStyle
   completed: boolean
   instanceData?: ExerciseInstance[][]  // [rep][exerciseIdx]
 }
@@ -85,8 +90,11 @@ export interface HIITConfig {
 
 export interface Session {
   id: string
-  clientId: string
-  date: Date
+  /** Legacy: sessions used to belong to a client. No longer set. */
+  clientId?: string
+  name?: string
+  /** Legacy: sessions no longer have a planned date. */
+  date?: Date
   type: SessionType
   notes?: string
   sets: SessionSet[]

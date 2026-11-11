@@ -9,7 +9,7 @@ export default function SessionList() {
   const [showForm, setShowForm] = useState(false)
 
   const sessions = useLiveQuery(
-    () => db.sessions.orderBy('date').reverse().toArray(),
+    () => db.sessions.orderBy('createdAt').reverse().toArray(),
     [],
   )
 

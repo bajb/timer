@@ -14,6 +14,20 @@ export function buildPyramidSteps(increment: number, peak: number): number[] {
   return steps
 }
 
+/** Work/rest blocks for the standalone HIIT timer (no trailing rest, matching tick()). */
+export function hiitBlocks(config: HIITConfig): { kind: 'work' | 'rest'; duration: number }[] {
+  const works =
+    config.mode === 'pyramid'
+      ? buildPyramidSteps(config.stepIncrement, config.peakTime)
+      : Array.from({ length: config.rounds }, () => config.exerciseTime)
+  return works.flatMap((d, i) => {
+    const work = { kind: 'work' as const, duration: d }
+    return i < works.length - 1 && config.restTime > 0
+      ? [work, { kind: 'rest' as const, duration: config.restTime }]
+      : [work]
+  })
+}
+
 interface TimerState {
   phase: TimerPhase
   timeRemaining: number

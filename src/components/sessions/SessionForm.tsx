@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useLiveQuery } from 'dexie-react-hooks'
 import { v4 as uuid } from 'uuid'
 import { X, Plus, Copy, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import {
@@ -7,13 +6,15 @@ import {
   type SessionType,
   type SessionExercise,
   type SessionSet,
-  type SetMode,
   type SetTimerMode,
+  type PyramidStyle,
   type Session,
 } from '../../db'
 import { formatDuration, cn } from '../../lib/utils'
 import { buildPyramidSteps } from '../../stores/timerStore'
 import ExerciseInput from './ExerciseInput'
+import SetTimeline from '../timer/SetTimeline'
+import { setToBlocks } from '../../lib/sequence'
 
 const SESSION_TYPES: { value: SessionType; label: string }[] = [
   { value: 'strength', label: 'Strength' },
@@ -24,42 +25,70 @@ const SESSION_TYPES: { value: SessionType; label: string }[] = [
 ]
 
 interface Props {
-  clientId?: string
   session?: Session
   onClose: () => void
 }
 
 interface SetDraft {
-  mode: SetMode
   timerMode: SetTimerMode
   exercises: SessionExercise[]
   restDuration: number
+  exerciseDuration: number
+  exerciseReps: number
   reps: number
   stepIncrement: number
   peakTime: number
+  pyramidStyle: PyramidStyle
 }
 
 function defaultSet(): SetDraft {
   return {
-    mode: 'circuit',
     timerMode: 'standard',
     exercises: [],
     restDuration: 30,
+    exerciseDuration: 30,
+    exerciseReps: 10,
     reps: 1,
     stepIncrement: 10,
     peakTime: 40,
+    pyramidStyle: 'alternate',
   }
 }
 
 function setFromExisting(set: SessionSet): SetDraft {
   return {
-    mode: set.mode ?? 'circuit',
     timerMode: set.timerMode ?? 'standard',
     exercises: set.exercises.map((ex) => ({ ...ex, completed: false })),
     restDuration: set.restDuration,
+    exerciseDuration: set.exerciseDuration ?? 30,
+    exerciseReps: set.exerciseReps ?? 10,
     reps: set.reps,
     stepIncrement: set.stepIncrement ?? 10,
     peakTime: set.peakTime ?? 40,
+    pyramidStyle: set.pyramidStyle ?? 'all',
+  }
+}
+
+function draftToSet(draft: SetDraft): SessionSet {
+  const exerciseList = draft.exercises.filter((ex) => ex.name.trim())
+  const pyramidSteps =
+    draft.timerMode === 'pyramid'
+      ? buildPyramidSteps(draft.stepIncrement, draft.peakTime)
+      : []
+  const reps = draft.timerMode === 'pyramid' ? pyramidSteps.length : draft.reps
+
+  return {
+    mode: 'circuit' as const,
+    exercises: exerciseList.map((ex) => ({ ...ex, completed: false })),
+    restDuration: draft.restDuration,
+    exerciseDuration: draft.timerMode === 'standard' ? draft.exerciseDuration : undefined,
+    exerciseReps: draft.timerMode === 'none' ? draft.exerciseReps : undefined,
+    reps,
+    timerMode: draft.timerMode,
+    stepIncrement: draft.timerMode === 'pyramid' ? draft.stepIncrement : undefined,
+    peakTime: draft.timerMode === 'pyramid' ? draft.peakTime : undefined,
+    pyramidStyle: draft.timerMode === 'pyramid' ? draft.pyramidStyle : undefined,
+    completed: false,
   }
 }
 
@@ -131,11 +160,20 @@ function SetCard({
       : []
 
   const exerciseCount = draft.exercises.filter((e) => e.name.trim()).length
+
+  // Preview with a placeholder exercise until one is named, so the shape still shows.
+  const previewSet = draftToSet(draft)
+  if (previewSet.exercises.length === 0) {
+    previewSet.exercises = [{ name: 'Exercise', completed: false }]
+  }
+  const previewBlocks = setToBlocks(previewSet)
   const summary = [
-    draft.mode === 'repeat' ? 'Repeat' : 'Circuit',
-    draft.timerMode === 'pyramid' ? `Pyramid ${pyramidSteps.length} steps` : null,
-    exerciseCount > 0 ? `${exerciseCount} ex` : null,
-    draft.timerMode === 'standard' && draft.reps > 1 ? `${draft.reps}x` : null,
+    draft.timerMode === 'none'
+      ? `${draft.exerciseReps} reps`
+      : draft.timerMode === 'pyramid'
+        ? `Pyramid ${pyramidSteps.length} steps`
+        : `${formatDuration(draft.exerciseDuration)} work`,
+    draft.timerMode !== 'pyramid' && draft.reps > 1 ? `${draft.reps} rounds` : null,
     draft.restDuration > 0 ? `${formatDuration(draft.restDuration)} rest` : null,
   ]
     .filter(Boolean)
@@ -150,58 +188,95 @@ function SetCard({
         className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
       >
         <span className="text-sm font-semibold text-gray-700">Set {index + 1}</span>
-        <span className="flex-1 truncate text-xs text-gray-400">{summary}</span>
+        <span className="flex-1 min-w-0">
+          <span className="block truncate text-xs text-gray-400">{summary}</span>
+          {exerciseCount > 0 && (
+            <span className="block truncate text-xs text-gray-600">
+              {draft.exercises.map((e) => e.name.trim()).filter(Boolean).join(', ')}
+            </span>
+          )}
+        </span>
         {expanded ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
       </button>
 
       {expanded && (
         <div className="border-t border-gray-100 px-3 py-3 space-y-3">
+          {/* Rounds — set level */}
+          {draft.timerMode !== 'pyramid' && (
+            <Stepper
+              label="Rounds"
+              value={draft.reps}
+              onChange={(v) => onChange({ ...draft, reps: v })}
+              step={1}
+              min={1}
+              max={20}
+            />
+          )}
+
           {/* Mode toggles */}
-          <div className="flex gap-2">
-            <div className="flex flex-1 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
-              {(['circuit', 'repeat'] as const).map((m) => (
+          <div className="space-y-2">
+            <div className="flex rounded-lg bg-gray-100 p-0.5">
+              {(['none', 'timer'] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
-                  onClick={() => onChange({ ...draft, mode: m })}
+                  onClick={() =>
+                    onChange({ ...draft, timerMode: m === 'none' ? 'none' : 'standard' })
+                  }
                   className={cn(
-                    'flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
-                    draft.mode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500',
+                    'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                    (m === 'none' ? draft.timerMode === 'none' : draft.timerMode !== 'none')
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500',
                   )}
                 >
-                  {m === 'circuit' ? 'Circuit' : 'Repeat'}
+                  {m === 'none' ? 'Reps' : 'Timer'}
                 </button>
               ))}
             </div>
-            <div className="flex flex-1 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
-              {(['standard', 'pyramid'] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => onChange({ ...draft, timerMode: m })}
-                  className={cn(
-                    'flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
-                    draft.timerMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500',
-                  )}
-                >
-                  {m === 'standard' ? 'Standard' : 'Pyramid'}
-                </button>
-              ))}
-            </div>
+            {draft.timerMode !== 'none' && (
+              <div className="flex rounded-lg bg-gray-100 p-0.5">
+                {(['standard', 'pyramid'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => onChange({ ...draft, timerMode: m })}
+                    className={cn(
+                      'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                      draft.timerMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500',
+                    )}
+                  >
+                    {m === 'standard' ? 'Standard' : 'Pyramid'}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Timer config */}
+          {/* Mode-specific config */}
           <div className="space-y-2">
-            {draft.timerMode === 'standard' ? (
+            {draft.timerMode === 'none' && (
               <Stepper
                 label="Reps"
-                value={draft.reps}
-                onChange={(v) => onChange({ ...draft, reps: v })}
+                value={draft.exerciseReps}
+                onChange={(v) => onChange({ ...draft, exerciseReps: v })}
                 step={1}
                 min={1}
-                max={20}
+                max={100}
               />
-            ) : (
+            )}
+            {draft.timerMode === 'standard' && (
+              <Stepper
+                label="Exercise Time"
+                value={draft.exerciseDuration}
+                onChange={(v) => onChange({ ...draft, exerciseDuration: v })}
+                step={5}
+                min={5}
+                max={300}
+                format={formatDuration}
+              />
+            )}
+            {draft.timerMode === 'pyramid' && (
               <>
                 <Stepper
                   label="Step Size"
@@ -221,6 +296,24 @@ function SetCard({
                   max={300}
                   format={formatDuration}
                 />
+                <div>
+                  <p className="mb-1 text-xs font-medium text-gray-600">Each step</p>
+                  <div className="flex rounded-lg bg-gray-100 p-0.5">
+                    {(['alternate', 'all'] as const).map((style) => (
+                      <button
+                        key={style}
+                        type="button"
+                        onClick={() => onChange({ ...draft, pyramidStyle: style })}
+                        className={cn(
+                          'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                          draft.pyramidStyle === style ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500',
+                        )}
+                      >
+                        {style === 'alternate' ? 'Alternate exercises' : 'All exercises'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </>
             )}
             <Stepper
@@ -234,22 +327,10 @@ function SetCard({
             />
           </div>
 
-          {/* Pyramid preview */}
-          {draft.timerMode === 'pyramid' && pyramidSteps.length > 0 && (
-            <div className="rounded-lg border border-gray-100 bg-gray-50 p-2">
-              <p className="text-xs text-gray-400 mb-1">{pyramidSteps.length} steps</p>
-              <div className="flex flex-wrap gap-1">
-                {pyramidSteps.map((d, i) => (
-                  <span
-                    key={i}
-                    className="rounded bg-white border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-600"
-                  >
-                    {formatDuration(d)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Visual preview of the set */}
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-2">
+            <SetTimeline blocks={previewBlocks} />
+          </div>
 
           {/* Exercises */}
           <ExerciseInput
@@ -284,13 +365,9 @@ function SetCard({
   )
 }
 
-export default function SessionForm({ clientId, session, onClose }: Props) {
-  const clients = useLiveQuery(() => db.clients.orderBy('name').toArray(), [])
-  const [selectedClientId, setSelectedClientId] = useState(clientId ?? session?.clientId ?? '')
+export default function SessionForm({ session, onClose }: Props) {
+  const [name, setName] = useState(session?.name ?? '')
   const [type, setType] = useState<SessionType>(session?.type ?? 'strength')
-  const [date, setDate] = useState(
-    (session?.date ?? new Date()).toISOString().slice(0, 10),
-  )
   const [notes, setNotes] = useState(session?.notes ?? '')
   const [sets, setSets] = useState<SetDraft[]>(
     session?.sets.map(setFromExisting) ?? [defaultSet()],
@@ -316,41 +393,19 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
 
   function addSet() {
     const lastSet = sets[sets.length - 1]
-    const newSet = lastSet
-      ? { ...lastSet, exercises: lastSet.exercises.map((e) => ({ ...e })) }
-      : defaultSet()
+    // Keep the timing settings, but each set gets its own exercises.
+    const newSet = lastSet ? { ...lastSet, exercises: [] } : defaultSet()
     setSets((prev) => [...prev, newSet])
     setExpandedSet(sets.length)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!selectedClientId) return
-
-    const sessionSets: SessionSet[] = sets.map((draft) => {
-      const exerciseList = draft.exercises.filter((ex) => ex.name.trim())
-      const pyramidSteps =
-        draft.timerMode === 'pyramid'
-          ? buildPyramidSteps(draft.stepIncrement, draft.peakTime)
-          : []
-      const reps = draft.timerMode === 'pyramid' ? pyramidSteps.length : draft.reps
-
-      return {
-        mode: draft.mode,
-        exercises: exerciseList.map((ex) => ({ ...ex, completed: false })),
-        restDuration: draft.restDuration,
-        reps,
-        timerMode: draft.timerMode,
-        stepIncrement: draft.timerMode === 'pyramid' ? draft.stepIncrement : undefined,
-        peakTime: draft.timerMode === 'pyramid' ? draft.peakTime : undefined,
-        completed: false,
-      }
-    })
+    const sessionSets: SessionSet[] = sets.map(draftToSet)
 
     const data = {
-      clientId: selectedClientId,
+      name: name.trim() || undefined,
       type,
-      date: new Date(date),
       notes: notes.trim() || undefined,
       sets: sessionSets,
     }
@@ -384,24 +439,15 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
           </button>
         </div>
 
-        {!clientId && (
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">Client *</span>
-            <select
-              required
-              value={selectedClientId}
-              onChange={(e) => setSelectedClientId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none bg-white"
-            >
-              <option value="">Select client...</option>
-              {clients?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        <label className="block">
+          <span className="text-sm font-medium text-gray-700">Name</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Upper body circuit"
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
+          />
+        </label>
 
         <div>
           <span className="text-sm font-medium text-gray-700">Type</span>
@@ -422,16 +468,6 @@ export default function SessionForm({ clientId, session, onClose }: Props) {
             ))}
           </div>
         </div>
-
-        <label className="block">
-          <span className="text-sm font-medium text-gray-700">Date</span>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
-          />
-        </label>
 
         {/* Per-set configuration */}
         <div className="space-y-3">

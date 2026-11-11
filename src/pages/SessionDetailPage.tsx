@@ -1,20 +1,20 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ArrowLeft, Play, Check, RotateCcw, Copy } from 'lucide-react'
+import { ArrowLeft, Play, Check, RotateCcw, Copy, Pencil } from 'lucide-react'
 import { v4 as uuid } from 'uuid'
-import { db, type Session, type Client } from '../db'
+import { db, type Session } from '../db'
 import { buildPyramidSteps } from '../stores/timerStore'
-import { formatDate, formatDuration, cn } from '../lib/utils'
+import { formatDuration, cn } from '../lib/utils'
+import { buildSequence, describeSet, setToBlocks } from '../lib/sequence'
+import SetTimeline from '../components/timer/SetTimeline'
 import LiveSessionView from '../components/sessions/LiveSessionView'
+import SessionForm from '../components/sessions/SessionForm'
 
 export default function SessionDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const session = useLiveQuery(() => (id ? db.sessions.get(id) : undefined), [id])
-  const client = useLiveQuery(
-    () => (session ? db.clients.get(session.clientId) : undefined),
-    [session],
-  )
 
   if (!session) {
     return (
@@ -29,29 +29,22 @@ export default function SessionDetailPage() {
   }
 
   if (session.status === 'planned') {
-    return <PlannedView session={session} client={client} onBack={() => navigate(-1)} />
+    return <PlannedView session={session} onBack={() => navigate(-1)} />
   }
 
-  return <CompletedView session={session} client={client} onBack={() => navigate(-1)} />
+  return <CompletedView session={session} onBack={() => navigate(-1)} />
 }
 
 // --- Planned View ---
 
 function PlannedView({
   session,
-  client,
   onBack,
 }: {
   session: Session
-  client?: Client
   onBack: () => void
 }) {
-  const exercises = session.sets[0]?.exercises ?? []
-
-  const firstSet = session.sets[0]
-  const reps = firstSet?.reps ?? 1
-  const restDuration = firstSet?.restDuration ?? 0
-  const isPyramid = firstSet?.timerMode === 'pyramid'
+  const [showEdit, setShowEdit] = useState(false)
 
   async function startSession() {
     const sets = session.sets.map((set) => {
@@ -81,43 +74,50 @@ function PlannedView({
         <button onClick={onBack} className="text-gray-500 md:hidden">
           <ArrowLeft size={20} />
         </button>
-        <div>
-          <h1 className="text-lg font-semibold capitalize">{session.type} Session</h1>
-          <p className="text-sm text-gray-500">
-            {client?.name} &middot; {formatDate(session.date)}
-          </p>
+        <div className="flex-1">
+          <h1 className="text-lg font-semibold">{session.name || <span className="capitalize">{session.type} Session</span>}</h1>
+          <p className="text-sm text-gray-500 capitalize">{session.type}</p>
         </div>
+        <button onClick={() => setShowEdit(true)} className="text-gray-500 hover:text-gray-700">
+          <Pencil size={18} />
+        </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-center">
-          <p className="text-sm text-blue-700 font-medium">
-            {session.sets.length} {session.sets.length === 1 ? 'set' : 'sets'} &middot;{' '}
-            {exercises.length} {exercises.length === 1 ? 'exercise' : 'exercises'}
-            {isPyramid && ' · Pyramid'}
-            {!isPyramid && reps > 1 && ` · ${reps} reps/set`}
-            {restDuration > 0 && ` · ${formatDuration(restDuration)} rest`}
-          </p>
-        </div>
+      {showEdit && (
+        <SessionForm session={session} onClose={() => setShowEdit(false)} />
+      )}
 
-        <section>
-          <h2 className="mb-2 text-sm font-semibold text-gray-700">Exercises per set</h2>
-          <ul className="space-y-2">
-            {exercises.map((ex, i) => (
-              <li key={i} className="rounded-lg border border-gray-200 bg-white p-3">
-                <p className="font-medium text-sm">{ex.name}</p>
-                <p className="text-xs text-gray-500">
-                  {[
-                    ex.targetReps && `${ex.targetReps} reps`,
-                    ex.targetWeight && `${ex.targetWeight}kg`,
-                    ex.targetDuration && `${ex.targetDuration}s`,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </p>
-              </li>
-            ))}
-          </ul>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <section className="space-y-3">
+          {session.sets.map((set, i) => (
+            <div key={i} className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold text-gray-700">Set {i + 1}</h2>
+                <p className="truncate text-xs text-gray-400">{describeSet(set)}</p>
+              </div>
+              <SetTimeline blocks={setToBlocks(set)} />
+              {set.exercises.length > 0 ? (
+                <ul className="mt-3 divide-y divide-gray-100 border-t border-gray-100">
+                  {set.exercises.map((ex, ei) => (
+                    <li key={ei} className="flex items-center justify-between gap-2 py-2 text-sm">
+                      <span className="truncate font-medium">{ex.name}</span>
+                      <span className="shrink-0 text-xs text-gray-500">
+                        {[
+                          ex.targetReps && `${ex.targetReps} reps`,
+                          ex.targetWeight && `${ex.targetWeight}kg`,
+                          ex.targetDuration && `${ex.targetDuration}s`,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-xs text-gray-400">No exercises in this set</p>
+              )}
+            </div>
+          ))}
         </section>
 
         {session.notes && (
@@ -145,13 +145,12 @@ function PlannedView({
 
 function CompletedView({
   session,
-  client,
   onBack,
 }: {
   session: Session
-  client?: Client
   onBack: () => void
 }) {
+  const [showEdit, setShowEdit] = useState(false)
   const navigate = useNavigate()
 
   async function resumeSession() {
@@ -172,17 +171,19 @@ function CompletedView({
       mode: set.mode,
       exercises: set.exercises.map((ex) => ({ ...ex, completed: false })),
       restDuration: set.restDuration,
+      exerciseDuration: set.exerciseDuration,
+      exerciseReps: set.exerciseReps,
       reps: set.reps,
       timerMode: set.timerMode,
       stepIncrement: set.stepIncrement,
       peakTime: set.peakTime,
+      pyramidStyle: set.pyramidStyle,
       completed: false,
     }))
     await db.sessions.add({
       id: newId,
-      clientId: session.clientId,
+      name: session.name,
       type: session.type,
-      date: new Date(),
       notes: session.notes,
       sets,
       status: 'planned' as const,
@@ -197,16 +198,29 @@ function CompletedView({
         <button onClick={onBack} className="text-gray-500 md:hidden">
           <ArrowLeft size={20} />
         </button>
-        <div>
-          <h1 className="text-lg font-semibold capitalize">{session.type} Session</h1>
+        <div className="flex-1">
+          <h1 className="text-lg font-semibold">{session.name || <span className="capitalize">{session.type} Session</span>}</h1>
           <p className="text-sm text-gray-500">
-            {client?.name} &middot; {formatDate(session.date)}
+            <span className="capitalize">{session.type}</span>
             {session.duration != null && ` · ${formatDuration(session.duration)}`}
           </p>
         </div>
+        <button onClick={() => setShowEdit(true)} className="text-gray-500 hover:text-gray-700">
+          <Pencil size={18} />
+        </button>
       </header>
+
+      {showEdit && (
+        <SessionForm session={session} onClose={() => setShowEdit(false)} />
+      )}
+
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {session.sets.map((set, setIdx) => (
+        {session.sets.map((set, setIdx) => {
+          // Which exercises ran in which round (alternating pyramids run one per round).
+          const ranInRound = new Set(
+            buildSequence(set).flatMap((s) => (s.type === 'exercise' ? [`${s.rep}-${s.exerciseIndex}`] : [])),
+          )
+          return (
           <section key={setIdx}>
             <h2 className="mb-2 text-sm font-semibold text-gray-700">
               Set {setIdx + 1}
@@ -223,6 +237,7 @@ function CompletedView({
                 )}
                 <ul className="space-y-2">
                   {set.exercises.map((ex, exIdx) => {
+                    if (!ranInRound.has(`${repIdx}-${exIdx}`)) return null
                     const instance = repExercises[exIdx]
                     return (
                       <li
@@ -271,7 +286,8 @@ function CompletedView({
               </div>
             ))}
           </section>
-        ))}
+          )
+        })}
         {session.notes && (
           <section>
             <h2 className="mb-1 text-sm font-semibold text-gray-700">Notes</h2>

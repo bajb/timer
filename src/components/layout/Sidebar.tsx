@@ -1,9 +1,8 @@
 import { NavLink } from 'react-router-dom'
-import { Users, Calendar, Timer, Settings } from 'lucide-react'
+import { Calendar, Timer, Settings } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 const links = [
-  { to: '/clients', icon: Users, label: 'Clients' },
   { to: '/sessions', icon: Calendar, label: 'Sessions' },
   { to: '/timer', icon: Timer, label: 'Timer' },
   { to: '/settings', icon: Settings, label: 'Settings' },
