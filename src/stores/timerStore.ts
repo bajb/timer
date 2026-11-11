@@ -1,7 +1,26 @@
 import { create } from 'zustand'
 import type { HIITConfig } from '../db'
 
-export type TimerPhase = 'idle' | 'exercise' | 'rest' | 'complete'
+export type TimerPhase = 'idle' | 'ready' | 'exercise' | 'rest' | 'complete'
+export type StartCountdown = 3 | 5
+export type SoundProfile = 'relaxed' | 'loud' | 'whistle'
+
+function loadSoundProfile(): SoundProfile {
+  try {
+    const v = localStorage.getItem('fittrack-sound-profile')
+    return v === 'loud' || v === 'whistle' ? v : 'relaxed'
+  } catch {
+    return 'relaxed'
+  }
+}
+
+function loadStartCountdown(): StartCountdown {
+  try {
+    return localStorage.getItem('fittrack-start-countdown') === '3' ? 3 : 5
+  } catch {
+    return 5
+  }
+}
 
 export function buildPyramidSteps(increment: number, peak: number): number[] {
   const steps: number[] = []
@@ -37,6 +56,9 @@ interface TimerState {
   isPaused: boolean
   audioEnabled: boolean
   vibrationEnabled: boolean
+  /** "Get ready" seconds before a set starts. */
+  startCountdown: StartCountdown
+  soundProfile: SoundProfile
 
   setConfig: (config: Partial<HIITConfig>) => void
   start: () => void
@@ -46,6 +68,8 @@ interface TimerState {
   tick: () => void
   setAudioEnabled: (enabled: boolean) => void
   setVibrationEnabled: (enabled: boolean) => void
+  setStartCountdown: (seconds: StartCountdown) => void
+  setSoundProfile: (profile: SoundProfile) => void
 }
 
 const DEFAULT_CONFIG: HIITConfig = {
@@ -67,6 +91,8 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   isPaused: false,
   audioEnabled: localStorage.getItem('fittrack-audio') !== 'false',
   vibrationEnabled: localStorage.getItem('fittrack-vibration') !== 'false',
+  startCountdown: loadStartCountdown(),
+  soundProfile: loadSoundProfile(),
 
   setConfig: (partial) =>
     set((s) => ({ config: { ...s.config, ...partial } })),
@@ -79,8 +105,8 @@ export const useTimerStore = create<TimerState>((set, get) => ({
         : []
     const rounds = config.mode === 'pyramid' ? steps.length : config.rounds
     set({
-      phase: 'exercise',
-      timeRemaining: config.mode === 'pyramid' ? steps[0] : config.exerciseTime,
+      phase: 'ready',
+      timeRemaining: get().startCountdown,
       currentRound: 1,
       isPaused: false,
       steps,
@@ -109,7 +135,12 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     }
 
     // Time expired — transition
-    if (phase === 'exercise') {
+    if (phase === 'ready') {
+      set({
+        phase: 'exercise',
+        timeRemaining: config.mode === 'pyramid' && steps[0] ? steps[0] : config.exerciseTime,
+      })
+    } else if (phase === 'exercise') {
       if (currentRound >= config.rounds) {
         set({
           phase: 'complete',
@@ -141,5 +172,23 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   setVibrationEnabled: (enabled) => {
     localStorage.setItem('fittrack-vibration', String(enabled))
     set({ vibrationEnabled: enabled })
+  },
+
+  setStartCountdown: (seconds) => {
+    try {
+      localStorage.setItem('fittrack-start-countdown', String(seconds))
+    } catch {
+      // storage unavailable — keep in memory only
+    }
+    set({ startCountdown: seconds })
+  },
+
+  setSoundProfile: (profile) => {
+    try {
+      localStorage.setItem('fittrack-sound-profile', profile)
+    } catch {
+      // storage unavailable — keep in memory only
+    }
+    set({ soundProfile: profile })
   },
 }))

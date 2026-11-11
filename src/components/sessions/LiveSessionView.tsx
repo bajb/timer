@@ -68,6 +68,11 @@ export default function LiveSessionView({ session }: Props) {
     ),
   )
 
+  const startCountdown = useTimerStore((s) => s.startCountdown)
+  // "Get ready" seconds before a set begins; null when not counting.
+  // Resuming a session mid-way also gets a get-ready.
+  const [ready, setReady] = useState<number | null>(() => (started ? startCountdown : null))
+
   const countdownRef = useRef<ReturnType<typeof setInterval>>(undefined)
   const prevStepRef = useRef<string>('')
 
@@ -104,7 +109,7 @@ export default function LiveSessionView({ session }: Props) {
   // Auto-start countdown for timed steps
   const currentStep = sequence[stepIndex] as SequenceStep | undefined
   useEffect(() => {
-    if (!currentStep || !started) return
+    if (!currentStep || !started || ready !== null) return
 
     const stepKey = `${activeSetIdx}-${stepIndex}`
     if (stepKey === prevStepRef.current) return
@@ -128,12 +133,12 @@ export default function LiveSessionView({ session }: Props) {
     } else {
       setCountdown(null)
     }
-  }, [currentStep, stepIndex, activeSetIdx, started]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentStep, stepIndex, activeSetIdx, started, ready]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Countdown interval
   useEffect(() => {
     clearInterval(countdownRef.current)
-    if (countdown === null || countdown <= 0 || isPaused) return
+    if (countdown === null || countdown <= 0 || isPaused || ready !== null) return
 
     countdownRef.current = setInterval(() => {
       setCountdown((prev) => {
@@ -142,7 +147,24 @@ export default function LiveSessionView({ session }: Props) {
       })
     }, 1000)
     return () => clearInterval(countdownRef.current)
-  }, [countdown !== null && countdown > 0, isPaused]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [countdown !== null && countdown > 0, isPaused, ready]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Get-ready countdown
+  useEffect(() => {
+    if (ready === null || isPaused) return
+    const t = setTimeout(() => setReady(ready <= 1 ? null : ready - 1), 1000)
+    return () => clearTimeout(t)
+  }, [ready, isPaused])
+
+  useEffect(() => {
+    if (ready !== null) tickBeep(ready)
+  }, [ready, tickBeep])
+
+  /** Switch to a set (or restart the current one) with a get-ready countdown. */
+  function beginSet(idx: number) {
+    setReady(startCountdown)
+    setActiveSetIdx(idx)
+  }
 
   // Tick beeps at 3, 2, 1
   useEffect(() => {
@@ -259,6 +281,7 @@ export default function LiveSessionView({ session }: Props) {
     setCountdown(null)
     setIsPaused(false)
     prevStepRef.current = ''
+    setReady(startCountdown)
   }
 
   async function handleDone() {
@@ -353,7 +376,7 @@ export default function LiveSessionView({ session }: Props) {
           {session.sets.map((s, i) => (
             <button
               key={i}
-              onClick={() => setActiveSetIdx(i)}
+              onClick={() => (i === activeSetIdx ? undefined : started ? beginSet(i) : setActiveSetIdx(i))}
               className={cn(
                 'h-2 flex-1 rounded-full transition-colors',
                 s.completed
@@ -413,7 +436,10 @@ export default function LiveSessionView({ session }: Props) {
               })}
             </ul>
             <button
-              onClick={() => setStarted(true)}
+              onClick={() => {
+                setReady(startCountdown)
+                setStarted(true)
+              }}
               className="mt-2 flex h-28 w-28 items-center justify-center rounded-full bg-green-600 text-white font-bold text-xl shadow-lg hover:bg-green-700 hover:scale-105 active:scale-95 transition-all"
             >
               START
@@ -440,7 +466,7 @@ export default function LiveSessionView({ session }: Props) {
                       <button
                         onClick={() => {
                           const next = session.sets.findIndex((s, i) => i > activeSetIdx && !s.completed)
-                          if (next !== -1) setActiveSetIdx(next)
+                          if (next !== -1) beginSet(next)
                         }}
                         className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white"
                       >
@@ -449,6 +475,23 @@ export default function LiveSessionView({ session }: Props) {
                     )}
                   </div>
                 </div>
+              ) : ready !== null ? (
+                <>
+                  <div className="rounded-full bg-amber-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
+                    GET READY
+                  </div>
+                  <button onClick={() => setReady(null)} title="Skip">
+                    <ProgressRing progress={ready / startCountdown} size={160} strokeWidth={8} color="#f59e0b">
+                      <div className="text-5xl font-bold tabular-nums">{ready}</div>
+                    </ProgressRing>
+                  </button>
+                  {currentStep?.type === 'exercise' && (
+                    <p className="text-sm text-gray-500">
+                      First up: <span className="font-semibold text-gray-700">{activeSet.exercises[currentStep.exerciseIndex]?.name}</span>
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-400">Tap to skip</p>
+                </>
               ) : isRestStep ? (
                 <>
                   <div className="rounded-full bg-red-500 px-5 py-1.5 text-sm font-bold text-white tracking-wider">
@@ -695,7 +738,7 @@ export default function LiveSessionView({ session }: Props) {
         ) : currentSetDone ? null : (
           <div className="flex gap-3">
             {/* Pause/Resume — only shown during countdowns */}
-            {countdown !== null && countdown > 0 && (
+            {((countdown !== null && countdown > 0) || ready !== null) && (
               <button
                 onClick={() => setIsPaused(!isPaused)}
                 className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-700"

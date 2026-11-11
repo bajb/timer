@@ -1,5 +1,7 @@
-import { Volume2, VolumeX, Smartphone, Info } from 'lucide-react'
+import { Volume2, VolumeX, Smartphone, Info, Hourglass, Megaphone } from 'lucide-react'
 import { useTimerStore } from '../stores/timerStore'
+import { SOUND_PROFILES, previewSound } from '../hooks/useAudio'
+import { cn } from '../lib/utils'
 
 function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (
@@ -23,6 +25,10 @@ export default function SettingsPage() {
   const vibrationEnabled = useTimerStore((s) => s.vibrationEnabled)
   const setAudioEnabled = useTimerStore((s) => s.setAudioEnabled)
   const setVibrationEnabled = useTimerStore((s) => s.setVibrationEnabled)
+  const soundProfile = useTimerStore((s) => s.soundProfile)
+  const setSoundProfile = useTimerStore((s) => s.setSoundProfile)
+  const startCountdown = useTimerStore((s) => s.startCountdown)
+  const setStartCountdown = useTimerStore((s) => s.setStartCountdown)
 
   return (
     <div className="flex flex-1 flex-col">
@@ -53,6 +59,60 @@ export default function SettingsPage() {
                 enabled={audioEnabled}
                 onToggle={() => setAudioEnabled(!audioEnabled)}
               />
+            </div>
+            {audioEnabled && (
+              <div className="p-4">
+                <div className="mb-3 flex items-center gap-3">
+                  <Megaphone size={18} className="text-gray-500" />
+                  <div>
+                    <p className="text-sm font-medium">Sound</p>
+                    <p className="text-xs text-gray-500">Tap to choose and hear a preview</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {SOUND_PROFILES.map((p) => (
+                    <button
+                      key={p.value}
+                      onClick={() => {
+                        setSoundProfile(p.value)
+                        previewSound(p.value)
+                      }}
+                      className={cn(
+                        'rounded-lg border px-2 py-2 text-left transition-colors',
+                        soundProfile === p.value
+                          ? 'border-primary-500 bg-primary-50'
+                          : 'border-gray-200 hover:bg-gray-50',
+                      )}
+                    >
+                      <p className="text-sm font-medium">{p.label}</p>
+                      <p className="text-[11px] leading-tight text-gray-500">{p.hint}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center gap-3">
+                <Hourglass size={18} className="text-gray-500" />
+                <div>
+                  <p className="text-sm font-medium">Get Ready</p>
+                  <p className="text-xs text-gray-500">Countdown before each set starts</p>
+                </div>
+              </div>
+              <div className="flex rounded-lg bg-gray-100 p-0.5">
+                {([3, 5] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setStartCountdown(s)}
+                    className={cn(
+                      'rounded-md px-3 py-1 text-sm font-medium transition-colors',
+                      startCountdown === s ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500',
+                    )}
+                  >
+                    {s}s
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-3">

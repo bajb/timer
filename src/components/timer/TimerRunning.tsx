@@ -18,7 +18,7 @@ export default function TimerRunning() {
   const { tickBeep, phaseChangeBeep, completeBeep } = useAudio(audioEnabled)
   const vibration = useVibration(vibrationEnabled)
 
-  useWakeLock(phase === 'exercise' || phase === 'rest')
+  useWakeLock(phase === 'ready' || phase === 'exercise' || phase === 'rest')
 
   useEffect(() => {
     if (isPaused || phase === 'idle' || phase === 'complete') {
@@ -36,6 +36,7 @@ export default function TimerRunning() {
         completeBeep()
         vibration.complete()
       } else if (phase === 'exercise' || phase === 'rest') {
+        // No beep entering 'ready'; the 3-2-1 ticks cover it.
         phaseChangeBeep()
         vibration.phaseChange()
       }
@@ -54,11 +55,14 @@ export default function TimerRunning() {
       ? steps[currentRound - 1]
       : config.exerciseTime
 
+  const startCountdown = useTimerStore((s) => s.startCountdown)
   const totalTime =
-    phase === 'exercise' ? currentStepDuration : config.restTime
+    phase === 'ready' ? startCountdown : phase === 'exercise' ? currentStepDuration : config.restTime
   const progress = totalTime > 0 ? timeRemaining / totalTime : 0
-  const phaseColor = phase === 'exercise' ? '#22c55e' : '#ef4444'
-  const phaseLabel = phase === 'exercise' ? 'EXERCISE' : 'REST'
+  const phaseColor =
+    phase === 'ready' ? '#f59e0b' : phase === 'exercise' ? '#22c55e' : '#ef4444'
+  const phaseLabel =
+    phase === 'ready' ? 'GET READY' : phase === 'exercise' ? 'EXERCISE' : 'REST'
 
   const minutes = Math.floor(timeRemaining / 60)
   const seconds = timeRemaining % 60
@@ -92,7 +96,7 @@ export default function TimerRunning() {
         className="w-full max-w-md"
         blocks={hiitBlocks(config)}
         activeIndex={(currentRound - 1) * (config.restTime > 0 ? 2 : 1) + (phase === 'rest' ? 1 : 0)}
-        activeRemaining={progress}
+        activeRemaining={phase === 'ready' ? undefined : progress}
       />
 
       <div className="flex gap-4">
